@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -106,6 +105,16 @@ func AbsF(f float32) float32 {
 }
 func Pow(x, y float32) float32 {
 	return float32(math.Pow(float64(x), float64(y)))
+}
+func Lerp(x, y, a float32) float32 {
+	//return float32(x + (y - x) * ClampF(a, 0, 1))
+	return float32((1-a)*x + a*y)
+}
+func Ceil(x float32) int32 {
+	return int32(math.Ceil(float64(x)))
+}
+func Floor(x float32) int32 {
+	return int32(math.Floor(float64(x)))
 }
 func IsFinite(f float32) bool {
 	return math.Abs(float64(f)) <= math.MaxFloat64
@@ -231,7 +240,7 @@ func I32ToU16(i32 int32) uint16 {
 	return uint16(i32)
 }
 func LoadText(filename string) (string, error) {
-	bytes, err := ioutil.ReadFile(filename)
+	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		return "", err
 	}
@@ -730,12 +739,12 @@ func (al *AnimLayout) ReadAnimPalfx(pre string, is IniSection) {
 			al.palfx.sinadd[0] = -s[0]
 			al.palfx.sinadd[1] = -s[1]
 			al.palfx.sinadd[2] = -s[2]
-			al.palfx.cycletime = -s[3]
+			al.palfx.cycletime[0] = -s[3]
 		} else {
 			al.palfx.sinadd[0] = s[0]
 			al.palfx.sinadd[1] = s[1]
 			al.palfx.sinadd[2] = s[2]
-			al.palfx.cycletime = s[3]
+			al.palfx.cycletime[0] = s[3]
 		}
 	}
 	if is.ReadI32(pre+"sinmul", &s[0], &s[1], &s[2], &s[3]) {
@@ -743,22 +752,31 @@ func (al *AnimLayout) ReadAnimPalfx(pre string, is IniSection) {
 			al.palfx.sinmul[0] = -s[0]
 			al.palfx.sinmul[1] = -s[1]
 			al.palfx.sinmul[2] = -s[2]
-			al.palfx.cycletimeMul = -s[3]
+			al.palfx.cycletime[1] = -s[3]
 		} else {
 			al.palfx.sinmul[0] = s[0]
 			al.palfx.sinmul[1] = s[1]
 			al.palfx.sinmul[2] = s[2]
-			al.palfx.cycletimeMul = s[3]
+			al.palfx.cycletime[1] = s[3]
 		}
 	}
 	var s2 [2]int32
 	if is.ReadI32(pre+"sincolor", &s2[0], &s2[1]) {
 		if s2[1] < 0 {
-			al.palfx.sincolor = (-s2[0] / 256)
-			al.palfx.cycletimeColor = -s2[1]
+			al.palfx.sincolor = -s2[0]
+			al.palfx.cycletime[2] = -s2[1]
 		} else {
-			al.palfx.sincolor = (s2[0] / 256)
-			al.palfx.cycletimeColor = s2[1]
+			al.palfx.sincolor = s2[0]
+			al.palfx.cycletime[2] = s2[1]
+		}
+	}
+	if is.ReadI32(pre+"sinhue", &s2[0], &s2[1]) {
+		if s2[1] < 0 {
+			al.palfx.sinhue = -s2[0]
+			al.palfx.cycletime[3] = -s2[1]
+		} else {
+			al.palfx.sinhue = s2[0]
+			al.palfx.cycletime[3] = s2[1]
 		}
 	}
 	is.ReadBool(pre+"invertall", &al.palfx.invertall)
@@ -766,6 +784,9 @@ func (al *AnimLayout) ReadAnimPalfx(pre string, is IniSection) {
 	var n float32
 	if is.ReadF32(pre+"color", &n) {
 		al.palfx.color = n / 256
+	}
+	if is.ReadF32(pre+"hue", &n) {
+		al.palfx.hue = n / 256
 	}
 }
 
