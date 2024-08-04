@@ -1,6 +1,6 @@
 on:
   push:
-    branches: [ develop ]
+    branches: [ Rollback-Public-Alpha ]
   workflow_dispatch:
     inputs:
       tag:
@@ -73,21 +73,21 @@ jobs:
             os: windows-2022
             goos: windows
             goarch: amd64
-            bin: Ikemen_GO.exe
+            bin: Ikemen_GO_GGPO.exe
             glibc: ''
             target: ''
           - runner_os: linux
             os: ubuntu-20.04
             goos: linux
             goarch: amd64
-            bin: Ikemen_GO_Linux
+            bin: Ikemen_GO_GGPO_Linux
             glibc: '2.13'
             target: ''
           - runner_os: macos
             os: macos-12
             goos: darwin
             goarch: amd64
-            bin: Ikemen_GO_MacOS
+            bin: Ikemen_GO_GGPO_Mac
             glibc: ''
             target: '10.7'
     runs-on: ${{ matrix.cfg.os }}
