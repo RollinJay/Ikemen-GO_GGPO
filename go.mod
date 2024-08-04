@@ -11,6 +11,8 @@ require (
 	github.com/sqweek/dialog v0.0.0-20220809060634-e981b270ebbf
 	github.com/yuin/gopher-lua v1.1.0
 	golang.org/x/mobile v0.0.0-20221110043201-43a038452099
+	github.com/fyne-io/gl-js v0.0.0-20220802150000-8e339395f381
+	github.com/fyne-io/glfw-js v0.0.0-20220517201726-bebc2019cd33
 )
 
 require (
