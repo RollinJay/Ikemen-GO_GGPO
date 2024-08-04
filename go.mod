@@ -23,6 +23,7 @@ require (
 	github.com/gopherjs/gopherjs v0.0.0-20211219123610-ec9572f70e60 // indirect
 	github.com/hajimehoshi/go-mp3 v0.3.0 // indirect
 	github.com/hajimehoshi/oto v0.7.1 // indirect
+	github.com/ikemen-engine/beep v0.0.0-20230923080832-980aab9dbee7 // indirect
 	github.com/jfreymuth/oggvorbis v1.0.2 // indirect
 	github.com/jfreymuth/vorbis v1.0.1 // indirect
 	github.com/lukegb/dds v0.0.0-20190402175749-8b7170e64003 // indirect
@@ -32,5 +33,6 @@ require (
 	golang.org/x/exp v0.0.0-20220609121020-a51bd0440498 // indirect
 	golang.org/x/image v0.18.0 // indirect
 	golang.org/x/sys v0.5.0 // indirect
+	golang.org/x/exp/shiny v0.0.0-20220613132600-b0d781184e0d // indirect
 	honnef.co/go/js/dom v0.0.0-20210725211120-f030747120f2 // indirect
 )
