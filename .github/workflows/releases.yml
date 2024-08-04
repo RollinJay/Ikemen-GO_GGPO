@@ -126,7 +126,7 @@ jobs:
           elif [ "$RUNNER_OS" == "Windows" ]; then
             ldflags="$ldflags -H windowsgui"
             cd windres
-            windres -o ../src/ikemen_go.syso Ikemen_GO.rc
+            windres -o ../src/ikemen_go.syso Ikemen_GO.src
             cd ..
           fi
           echo "ldflags: $ldflags"
