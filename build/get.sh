@@ -1,6 +1,7 @@
 #!/bin/bash
 cd ..
 export CGO_ENABLED=1
+export GOEXPERIMENT=arenas
 
 echo "Downloading dependencies..."
 echo ""

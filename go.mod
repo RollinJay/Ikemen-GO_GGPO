@@ -1,4 +1,4 @@
-module github.com/RollinJay/Ikemen-GO_GGPO
+module github.com/ikemen-engine/Ikemen-GO
 
 go 1.20
 
