@@ -1,6 +1,6 @@
 on:
   push:
-    branches: [ develop ]
+    branches: [ Rollback-Public-Alpha ]
   workflow_dispatch:
     inputs:
       tag:
