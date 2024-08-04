@@ -1,6 +1,6 @@
 module github.com/RollinJay/Ikemen-GO_GGPO
 
-go
+go 1.20
 
 require (
 	github.com/assemblaj/ggpo v0.0.0-20230129160025-68dbb12db83e
