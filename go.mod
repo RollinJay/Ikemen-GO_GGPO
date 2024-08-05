@@ -1,4 +1,4 @@
-module github.com/ikemen-engine/Ikemen-GO
+module github.com/assemblaj/Ikemen-GO/tree/Rollback-Public-Alpha
 
 go 1.20
 
