@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 function main() {
 	# Enable CGO.
 	export CGO_ENABLED=1
-	export GOEXPERIMENT=arenas
+	
 	# Create "bin" folder.
 	mkdir -p bin
 
