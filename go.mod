@@ -13,6 +13,9 @@ require (
 	github.com/yuin/gopher-lua v0.0.0-20220504180219-658193537a64
 	golang.org/x/exp v0.0.0-20220609121020-a51bd0440498
 	golang.org/x/mobile v0.0.0-20221110043201-43a038452099
+	github.com/qmuntal/gltf/modeler
+	github.com/qmuntal/gltf
+	github.com/lukegb/dds
 )
 
 require (
