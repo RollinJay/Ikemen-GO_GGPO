@@ -25,30 +25,26 @@ const (
 )
 
 type PalFXDef struct {
-	time        int32
-	color       float32
-	add         [3]int32
-	mul         [3]int32
-	sinadd      [3]int32
-	sinmul      [3]int32
-	sincolor    int32
-	sinhue      int32
-	cycletime   [4]int32
-	invertall   bool
-	invertblend int32
-	hue         float32
-	interpolate bool
-	iadd        [6]int32
-	imul        [6]int32
-	icolor      [2]float32
-	ihue        [2]float32
-	itime       int32
+	time           int32
+	color          float32
+	add            [3]int32
+	mul            [3]int32
+	sinadd         [3]int32
+	sinmul         [3]int32
+	sincolor       int32
+	cycletime      int32
+	cycletimeMul   int32
+	cycletimeColor int32
+	invertall      bool
+	invertblend    int32
 }
 type PalFX struct {
 	PalFXDef
 	remap        []int
 	negType      bool
-	sintime      [4]int32
+	sintime      int32
+	sintime2     int32
+	sintime3     int32
 	enable       bool
 	eNegType     bool
 	eInvertall   bool
@@ -56,41 +52,22 @@ type PalFX struct {
 	eAdd         [3]int32
 	eMul         [3]int32
 	eColor       float32
-	eHue         float32
-	eInterpolate bool
-	eiAdd        [3]int32
-	eiMul        [3]int32
-	eiColor      float32
-	eiHue        float32
-	eiTime       int32
 }
 
 func newPalFX() *PalFX { return &PalFX{} }
 func (pf *PalFX) clear2(nt bool) {
-	pf.PalFXDef = PalFXDef{color: 1, icolor: [...]float32{1, 1}, mul: [...]int32{256, 256, 256}, imul: [...]int32{256, 256, 256, 256, 256, 256}}
+	pf.PalFXDef = PalFXDef{color: 1, mul: [...]int32{256, 256, 256}}
 	pf.negType = nt
-	for i := 0; i < len(pf.sintime); i++ {
-		pf.sintime[i] = 0
-	}
+	pf.sintime = 0
+	pf.sintime2 = 0
+	pf.sintime3 = 0
 }
 func (pf *PalFX) clear() {
 	pf.clear2(false)
 }
-func (pf *PalFX) getSynFx(blending int) *PalFX {
+func (pf *PalFX) getSynFx(blending bool) *PalFX {
 	if pf == nil || !pf.enable {
-		if blending == -2 && sys.allPalFX.enable {
-			if pf == nil {
-				pf = newPalFX()
-			}
-			pf.clear()
-			pf.enable = true
-			pf.eMul = pf.mul
-			pf.eAdd = pf.add
-			pf.eColor = pf.color
-			pf.eHue = pf.hue
-		} else {
-			return &sys.allPalFX
-		}
+		return &sys.allPalFX
 	}
 	if !sys.allPalFX.enable {
 		return pf
@@ -100,7 +77,7 @@ func (pf *PalFX) getSynFx(blending int) *PalFX {
 	return &synth
 }
 func (pf *PalFX) getFxPal(pal []uint32, neg bool) []uint32 {
-	p := pf.getSynFx(0)
+	p := pf.getSynFx(false)
 	if !p.enable {
 		return pal
 	}
@@ -149,8 +126,8 @@ func (pf *PalFX) getFxPal(pal []uint32, neg bool) []uint32 {
 	}
 	return sys.workpal
 }
-func (pf *PalFX) getFcPalFx(transNeg bool, blending int) (neg bool, grayscale float32,
-	add, mul [3]float32, invblend int32, hue float32) {
+func (pf *PalFX) getFcPalFx(transNeg bool, blending bool) (neg bool, grayscale float32,
+	add, mul [3]float32, invblend int32) {
 	p := pf.getSynFx(blending)
 	if !p.enable {
 		neg = false
@@ -166,7 +143,6 @@ func (pf *PalFX) getFcPalFx(transNeg bool, blending int) (neg bool, grayscale fl
 	neg = p.eInvertall
 	grayscale = 1 - p.eColor
 	invblend = p.eInvertblend
-	hue = -(p.eHue * 180.0) * (math.Pi / 180.0)
 	if !p.eNegType {
 		transNeg = false
 	}
@@ -182,81 +158,47 @@ func (pf *PalFX) getFcPalFx(transNeg bool, blending int) (neg bool, grayscale fl
 	return
 }
 func (pf *PalFX) sinAdd(color *[3]int32) {
-	if pf.cycletime[0] > 1 {
-		st := 2 * math.Pi * float64(pf.sintime[0])
-		if pf.cycletime[0] == 2 {
+	if pf.cycletime > 1 {
+		st := 2 * math.Pi * float64(pf.sintime)
+		if pf.cycletime == 2 {
 			st += math.Pi / 2
 		}
-		sin := math.Sin(st / float64(pf.cycletime[0]))
+		sin := math.Sin(st / float64(pf.cycletime))
 		for i := range *color {
 			(*color)[i] += int32(sin * float64(pf.sinadd[i]))
 		}
 	}
 }
 func (pf *PalFX) sinMul(color *[3]int32) {
-	if pf.cycletime[1] > 1 {
-		st := 2 * math.Pi * float64(pf.sintime[1])
-		if pf.cycletime[1] == 2 {
+	if pf.cycletimeMul > 1 {
+		st := 2 * math.Pi * float64(pf.sintime2)
+		if pf.cycletimeMul == 2 {
 			st += math.Pi / 2
 		}
-		sin := math.Sin(st / float64(pf.cycletime[1]))
+		sin := math.Sin(st / float64(pf.cycletimeMul))
 		for i := range *color {
 			(*color)[i] += int32(sin * float64(pf.sinmul[i]))
 		}
 	}
 }
 func (pf *PalFX) sinColor(color *float32) {
-	if pf.cycletime[2] > 1 {
-		st := 2 * math.Pi * float64(pf.sintime[2])
-		if pf.cycletime[2] == 2 {
-			st += math.Pi / 2.0
+	if pf.cycletimeColor > 1 {
+		st := 2 * math.Pi * float64(pf.sintime3)
+		if pf.cycletimeColor == 2 {
+			st += math.Pi / 2
 		}
-		sin := math.Sin(st / float64(pf.cycletime[2]))
+		sin := math.Sin(st / float64(pf.cycletimeColor))
 
-		(*color) += float32(sin * (float64(pf.sincolor) / 256.0))
-
-	}
-}
-func (pf *PalFX) sinHueshift(color *float32) {
-	if pf.cycletime[3] > 1 {
-		st := 2 * math.Pi * float64(pf.sintime[3])
-		if pf.cycletime[3] == 2 {
-			st += math.Pi / 2.0
-		}
-		sin := math.Sin(st / float64(pf.cycletime[3]))
-
-		(*color) += float32(sin * (float64(pf.sinhue) / 256.0))
+		(*color) += float32(sin * float64(pf.sincolor))
 
 	}
-}
-func (pf *PalFX) interpolationUpdate() {
-	if pf.eiTime < pf.itime {
-		pf.eiTime++
-	}
-	t := float32(pf.eiTime) / float32(pf.itime)
-	for i := 0; i < 3; i++ {
-		pf.eiMul[i] = int32(Lerp(float32(pf.imul[i+3]), float32(pf.imul[i]), t))
-		pf.eMul[i] = int32(float32(pf.eiMul[i]) * float32(pf.mul[i]) / 256)
-		pf.eiAdd[i] = int32(Lerp(float32(pf.iadd[i+3]), float32(pf.iadd[i]), t))
-		pf.eAdd[i] = pf.eiAdd[i] + pf.add[i]
-	}
-	pf.eiColor = Lerp(pf.icolor[1], pf.icolor[0], t)
-	pf.eColor = pf.eiColor * pf.color
-	pf.eiHue = Lerp(pf.ihue[1], pf.ihue[0], t)
-	pf.eHue = pf.eiHue + pf.hue
 }
 func (pf *PalFX) step() {
 	pf.enable = pf.time != 0
 	if pf.enable {
-		pf.eInterpolate = pf.interpolate
-		if pf.eInterpolate {
-			pf.interpolationUpdate()
-		} else {
-			pf.eMul = pf.mul
-			pf.eAdd = pf.add
-			pf.eColor = pf.color
-			pf.eHue = pf.hue
-		}
+		pf.eMul = pf.mul
+		pf.eAdd = pf.add
+		pf.eColor = pf.color
 		pf.eInvertall = pf.invertall
 		if pf.invertblend <= -2 && pf.eInvertall {
 			pf.eInvertblend = 3
@@ -267,12 +209,15 @@ func (pf *PalFX) step() {
 		pf.sinAdd(&pf.eAdd)
 		pf.sinMul(&pf.eMul)
 		pf.sinColor(&pf.eColor)
-		pf.sinHueshift(&pf.eHue)
 		if sys.tickFrame() {
-			for i := 0; i < 4; i++ {
-				if pf.cycletime[i] > 0 {
-					pf.sintime[i] = (pf.sintime[i] + 1) % pf.cycletime[i]
-				}
+			if pf.cycletime > 0 {
+				pf.sintime = (pf.sintime + 1) % pf.cycletime
+			}
+			if pf.cycletimeMul > 0 {
+				pf.sintime2 = (pf.sintime2 + 1) % pf.cycletimeMul
+			}
+			if pf.cycletimeColor > 0 {
+				pf.sintime3 = (pf.sintime3 + 1) % pf.cycletimeColor
 			}
 			if pf.time > 0 {
 				pf.time--
@@ -280,29 +225,20 @@ func (pf *PalFX) step() {
 		}
 	}
 }
-func (pf *PalFX) synthesize(pfx PalFX, blending int) {
-	if blending == -2 {
-		for i, a := range pfx.eAdd {
-			pf.eAdd[i] = Clamp(pf.eAdd[i]-Abs(a), 0, 255)
-			pf.eMul[i] = Clamp(pf.eMul[i]-a, 0, 255)
-		}
-	} else {
-		for i, a := range pfx.eAdd {
-			pf.eAdd[i] += a
-		}
-	}
+func (pf *PalFX) synthesize(pfx PalFX, blending bool) {
 	for i, m := range pfx.eMul {
 		pf.eMul[i] = pf.eMul[i] * m / 256
 	}
-
-	pf.eHue += pfx.eHue
+	for i, a := range pfx.eAdd {
+		pf.eAdd[i] += a
+	}
 	pf.eColor *= pfx.eColor
 	pf.eInvertall = pf.eInvertall != pfx.eInvertall
 
 	if pfx.invertall {
 		//Char blend inverse
 		if pfx.invertblend == 1 {
-			if blending != 0 && pf.invertblend > -3 {
+			if blending && pf.invertblend > -3 {
 				pf.eInvertall = pf.invertall
 			}
 			switch {
@@ -346,7 +282,6 @@ func (pf *PalFX) setColor(r, g, b int32) {
 
 	pf.enable = true
 	pf.eColor = 1
-	pf.eHue = 0
 	pf.eMul = [...]int32{
 		256 * rNormalized >> 8,
 		256 * gNormalized >> 8,
@@ -659,7 +594,7 @@ func (s *Sprite) shareCopy(src *Sprite) {
 	//s.PalTex = src.PalTex
 }
 func (s *Sprite) GetPal(pl *PaletteList) []uint32 {
-	if len(s.Pal) > 0 || s.coldepth > 8 {
+	if s.Pal != nil || s.coldepth > 8 {
 		return s.Pal
 	}
 	return pl.Get(int(s.palidx)) //pl.palettes[pl.paletteMap[int(s.palidx)]]

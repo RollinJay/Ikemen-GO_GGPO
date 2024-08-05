@@ -275,16 +275,16 @@ func RenderSprite(rp RenderParams) {
 
 	rmInitSub(&rp)
 
-	neg, grayscale, padd, pmul, invblend, hue := false, float32(0), [3]float32{0, 0, 0}, [3]float32{1, 1, 1}, int32(0), float32(0)
+	neg, grayscale, padd, pmul, invblend := false, float32(0), [3]float32{0, 0, 0}, [3]float32{1, 1, 1}, int32(0)
 	tint := [4]float32{float32(rp.tint&0xff) / 255, float32(rp.tint>>8&0xff) / 255,
 		float32(rp.tint>>16&0xff) / 255, float32(rp.tint>>24&0xff) / 255}
 
 	if rp.pfx != nil {
-		blending := rp.trans
-		//if rp.trans == -2 || rp.trans == -1 || (rp.trans&0xff > 0 && rp.trans>>10&0xff >= 255) {
-		//	blending = true
-		//}
-		neg, grayscale, padd, pmul, invblend, hue = rp.pfx.getFcPalFx(false, int(blending))
+		blending := false
+		if rp.trans == -2 || rp.trans == -1 || (rp.trans&0xff > 0 && rp.trans>>10&0xff >= 255) {
+			blending = true
+		}
+		neg, grayscale, padd, pmul, invblend = rp.pfx.getFcPalFx(false, blending)
 		//if rp.trans == -2 && invblend < 1 {
 		//padd[0], padd[1], padd[2] = -padd[0], -padd[1], -padd[2]
 		//}
@@ -306,14 +306,13 @@ func RenderSprite(rp RenderParams) {
 		} else {
 			gfx.SetTexture("pal", rp.paltex)
 			gfx.SetUniformI("isRgba", 0)
+			gfx.SetUniformI("mask", int(rp.mask))
 		}
-		gfx.SetUniformI("mask", int(rp.mask))
 		gfx.SetUniformI("isTrapez", int(Btoi(AbsF(AbsF(rp.xts)-AbsF(rp.xbs)) > 0.001)))
 		gfx.SetUniformI("isFlat", 0)
 
 		gfx.SetUniformI("neg", int(Btoi(neg)))
 		gfx.SetUniformF("gray", grayscale)
-		gfx.SetUniformF("hue", hue)
 		gfx.SetUniformFv("add", padd[:])
 		gfx.SetUniformFv("mult", pmul[:])
 		gfx.SetUniformFv("tint", tint[:])
@@ -397,10 +396,13 @@ func renderWithBlending(render func(eq BlendEquation, src, dst BlendFunc, a floa
 			} else {
 				Blend = BlendAdd
 			}
-			if !isrgba && (invblend >= 2 || invblend <= -1) && acolor != nil && mcolor != nil && src < 255 {
+			if (invblend >= 2 || invblend <= -1) && acolor != nil && mcolor != nil && src < 255 {
 				//Summ of add components
 				gc := AbsF(acolor[0]) + AbsF(acolor[1]) + AbsF(acolor[2])
 				v3, ml, al := MaxF((gc*255)-float32(dst+src), 512)/128, (float32(src) / 255), (float32(src+dst) / 255)
+				if isrgba {
+					v3 = 1
+				}
 				rM, gM, bM := mcolor[0]*ml, mcolor[1]*ml, mcolor[2]*ml
 				(*mcolor)[0], (*mcolor)[1], (*mcolor)[2] = rM, gM, bM
 				render(Blend, blendSourceFactor, BlendOne, al*Pow(v3, 3))

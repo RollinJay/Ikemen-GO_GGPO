@@ -72,81 +72,75 @@ func (c *Compiler) assertSpecial(is IniSection, sc *StateControllerBase, _ int8)
 		foo := func(data string) error {
 			switch strings.ToLower(data) {
 			case "nostandguard":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nostandguard)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nostandguard)))
 			case "nocrouchguard":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nocrouchguard)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nocrouchguard)))
 			case "noairguard":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noairguard)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noairguard)))
 			case "noshadow":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noshadow)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noshadow)))
 			case "invisible":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_invisible)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_invisible)))
 			case "unguardable":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_unguardable)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_unguardable)))
 			case "nojugglecheck":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nojugglecheck)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nojugglecheck)))
 			case "noautoturn":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noautoturn)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noautoturn)))
 			case "nowalk":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nowalk)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nowalk)))
 			case "nobrake":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nobrake)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nobrake)))
 			case "nocrouch":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nocrouch)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nocrouch)))
 			case "nostand":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nostand)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nostand)))
 			case "nojump":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nojump)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nojump)))
 			case "noairjump":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noairjump)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noairjump)))
 			case "nohardcodedkeys":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nohardcodedkeys)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nohardcodedkeys)))
 			case "nogetupfromliedown":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nogetupfromliedown)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nogetupfromliedown)))
 			case "nofastrecoverfromliedown":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nofastrecoverfromliedown)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nofastrecoverfromliedown)))
 			case "nofallcount":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nofallcount)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nofallcount)))
 			case "nofalldefenceup":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nofalldefenceup)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nofalldefenceup)))
 			case "noturntarget":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noturntarget)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noturntarget)))
 			case "noinput":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noinput)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noinput)))
 			case "nopowerbardisplay":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nopowerbardisplay)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nopowerbardisplay)))
 			case "autoguard":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_autoguard)))
-			case "animatehitpause":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_animatehitpause)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_autoguard)))
 			case "animfreeze":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_animfreeze)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_animfreeze)))
 			case "postroundinput":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_postroundinput)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_postroundinput)))
 			case "nohitdamage":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nohitdamage)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nohitdamage)))
 			case "noguarddamage":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noguarddamage)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noguarddamage)))
 			case "nodizzypointsdamage":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nodizzypointsdamage)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nodizzypointsdamage)))
 			case "noguardpointsdamage":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noguardpointsdamage)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noguardpointsdamage)))
 			case "noredlifedamage":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noredlifedamage)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noredlifedamage)))
 			case "nomakedust":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nomakedust)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nomakedust)))
 			case "noguardko":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noguardko)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noguardko)))
 			case "nokovelocity":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nokovelocity)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nokovelocity)))
 			case "noailevel":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_noailevel)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_noailevel)))
 			case "nointroreset":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_nointroreset)))
-			case "ignoreclsn2push":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_ignoreclsn2push)))
-			case "immovable":
-				sc.add(assertSpecial_flag, sc.i64ToExp(int64(ASF_immovable)))
+				sc.add(assertSpecial_flag, sc.i64ToExp(int64(CSF_nointroreset)))
 			case "intro":
 				sc.add(assertSpecial_flag_g, sc.i64ToExp(int64(GSF_intro)))
 			case "roundnotover":
@@ -481,19 +475,7 @@ func (c *Compiler) helper(is IniSection, sc *StateControllerBase, _ int8) (State
 			return err
 		}
 		if err := c.paramValue(is, sc, "size.height",
-			helper_size_height_stand, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "size.height.crouch",
-			helper_size_height_crouch, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "size.height.air",
-			helper_size_height_air, VT_Int, 2, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "size.height.down",
-			helper_size_height_down, VT_Int, 1, false); err != nil {
+			helper_size_height, VT_Int, 1, false); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "size.proj.doscale",
@@ -725,66 +707,11 @@ func (c *Compiler) explodSub(is IniSection,
 	}
 	return nil
 }
-func (c *Compiler) explodInterpolate(is IniSection,
-	sc *StateControllerBase) error {
-	if err := c.paramValue(is, sc, "interpolation.time",
-		explod_interpolate_time, VT_Int, 1, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.animelem",
-		explod_interpolate_animelem, VT_Int, 1, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.scale",
-		explod_interpolate_scale, VT_Float, 2, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.angle",
-		explod_interpolate_angle, VT_Float, 3, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.alpha",
-		explod_interpolate_alpha, VT_Float, 2, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.offset",
-		explod_interpolate_pos, VT_Float, 2, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.focallength",
-		explod_interpolate_focallength, VT_Float, 1, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.palfx.mul",
-		explod_interpolate_pfx_mul, VT_Int, 3, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.palfx.add",
-		explod_interpolate_pfx_add, VT_Int, 3, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.palfx.color",
-		explod_interpolate_pfx_color, VT_Float, 1, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "interpolation.palfx.hue",
-		explod_interpolate_pfx_hue, VT_Float, 1, false); err != nil {
-		return err
-	}
-	return nil
-}
 func (c *Compiler) explod(is IniSection, sc *StateControllerBase,
 	ihp int8) (StateController, error) {
 	ret, err := (*explod)(sc), c.stateSec(is, func() error {
 		if err := c.paramValue(is, sc, "redirectid",
 			explod_redirectid, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.stateParam(is, "anim", func(data string) error {
-			prefix := c.getDataPrefix(&data, false)
-			return c.scAdd(sc, explod_anim, data, VT_Int, 1,
-				sc.beToExp(BytecodeExp(prefix))...)
-		}); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "ownpal",
@@ -794,12 +721,19 @@ func (c *Compiler) explod(is IniSection, sc *StateControllerBase,
 		if err := c.explodSub(is, sc); err != nil {
 			return err
 		}
+		if err := c.stateParam(is, "anim", func(data string) error {
+			prefix := c.getDataPrefix(&data, false)
+			return c.scAdd(sc, explod_anim, data, VT_Int, 1,
+				sc.beToExp(BytecodeExp(prefix))...)
+		}); err != nil {
+			return err
+		}
 		if err := c.paramValue(is, sc, "animelem",
 			explod_animelem, VT_Int, 1, false); err != nil {
 			return err
 		}
-		if err := c.paramValue(is, sc, "animfreeze",
-			explod_animfreeze, VT_Bool, 1, false); err != nil {
+		if err := c.paramValue(is, sc, "animelemlooped",
+			explod_animelemlooped, VT_Bool, 1, false); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "angle",
@@ -816,9 +750,6 @@ func (c *Compiler) explod(is IniSection, sc *StateControllerBase,
 		}
 		if err := c.paramValue(is, sc, "focallength",
 			explod_focallength, VT_Float, 1, false); err != nil {
-			return err
-		}
-		if err := c.explodInterpolate(is, sc); err != nil {
 			return err
 		}
 		if ihp == 0 {
@@ -849,8 +780,8 @@ func (c *Compiler) modifyExplod(is IniSection, sc *StateControllerBase,
 			explod_animelem, VT_Int, 1, false); err != nil {
 			return err
 		}
-		if err := c.paramValue(is, sc, "animfreeze",
-			explod_animfreeze, VT_Bool, 1, false); err != nil {
+		if err := c.paramValue(is, sc, "animelemlooped",
+			explod_animelemlooped, VT_Bool, 1, false); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "angle",
@@ -867,10 +798,6 @@ func (c *Compiler) modifyExplod(is IniSection, sc *StateControllerBase,
 		}
 		if err := c.paramValue(is, sc, "focallength",
 			explod_focallength, VT_Float, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "interpolation",
-			explod_interpolation, VT_Bool, 1, false); err != nil {
 			return err
 		}
 		if ihp == 0 {
@@ -997,10 +924,6 @@ func (c *Compiler) palFXSub(is IniSection,
 		palFX_color, VT_Float, 1, false); err != nil {
 		return err
 	}
-	if err := c.paramValue(is, sc, prefix+"hue",
-		palFX_hue, VT_Float, 1, false); err != nil {
-		return err
-	}
 	if err := c.stateParam(is, prefix+"add", func(data string) error {
 		bes, err := c.exprs(data, VT_Int, 3)
 		if err != nil {
@@ -1066,19 +989,6 @@ func (c *Compiler) palFXSub(is IniSection,
 	}); err != nil {
 		return err
 	}
-	if err := c.stateParam(is, prefix+"sinhue", func(data string) error {
-		bes, err := c.exprs(data, VT_Int, 2)
-		if err != nil {
-			return err
-		}
-		if len(bes) < 2 {
-			return Error(prefix + "sinhue - not enough arguments")
-		}
-		sc.add(palFX_sinhue, bes)
-		return nil
-	}); err != nil {
-		return err
-	}
 	if err := c.paramValue(is, sc, prefix+"invertall",
 		palFX_invertall, VT_Bool, 1, false); err != nil {
 		return err
@@ -1139,10 +1049,6 @@ func (c *Compiler) afterImageSub(is IniSection,
 	}
 	if err := c.paramValue(is, sc, prefix+"palcolor",
 		afterImage_palcolor, VT_Int, 1, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, prefix+"palhue",
-		afterImage_palhue, VT_Int, 1, false); err != nil {
 		return err
 	}
 	if err := c.paramValue(is, sc, prefix+"palinvertall",
@@ -1482,10 +1388,6 @@ func (c *Compiler) hitDefSub(is IniSection,
 		hitDef_forcestand, VT_Bool, 1, false); err != nil {
 		return err
 	}
-	if err := c.paramValue(is, sc, "forcecrouch",
-		hitDef_forcecrouch, VT_Bool, 1, false); err != nil {
-		return err
-	}
 	if err := c.paramValue(is, sc, "forcenofall",
 		hitDef_forcenofall, VT_Bool, 1, false); err != nil {
 		return err
@@ -1603,10 +1505,6 @@ func (c *Compiler) hitDefSub(is IniSection,
 	}
 	if err := c.paramValue(is, sc, "guard.dist",
 		hitDef_guard_dist, VT_Int, 1, false); err != nil {
-		return err
-	}
-	if err := c.paramValue(is, sc, "guard.dist.back",
-		hitDef_guard_dist_back, VT_Int, 1, false); err != nil {
 		return err
 	}
 	if err := c.paramValue(is, sc, "pausetime",
@@ -1868,10 +1766,6 @@ func (c *Compiler) projectile(is IniSection, sc *StateControllerBase,
 		}
 		if err := c.paramValue(is, sc, "projangle",
 			projectile_projangle, VT_Float, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "projrescaleclsn",
-			projectile_projrescaleclsn, VT_Bool, 1, false); err != nil {
 			return err
 		}
 
@@ -2674,10 +2568,6 @@ func (c *Compiler) hitOverride(is IniSection, sc *StateControllerBase, _ int8) (
 			hitOverride_forceair, VT_Bool, 1, false); err != nil {
 			return err
 		}
-		if err := c.paramValue(is, sc, "keepstate",
-			hitOverride_keepstate, VT_Bool, 1, false); err != nil {
-			return err
-		}
 		return nil
 	})
 	return *ret, err
@@ -2898,10 +2788,6 @@ func (c *Compiler) angleDraw(is IniSection, sc *StateControllerBase, _ int8) (St
 			angleDraw_scale, VT_Float, 2, false); err != nil {
 			return err
 		}
-		if err := c.paramValue(is, sc, "rescaleclsn",
-			angleDraw_rescaleClsn, VT_Bool, 1, false); err != nil {
-			return err
-		}
 		return nil
 	})
 	return *ret, err
@@ -3083,10 +2969,6 @@ func (c *Compiler) attackDist(is IniSection, sc *StateControllerBase, _ int8) (S
 		}
 		if err := c.paramValue(is, sc, "value",
 			attackDist_value, VT_Float, 1, true); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "back",
-			attackDist_back, VT_Float, 1, false); err != nil {
 			return err
 		}
 		return nil
@@ -4270,10 +4152,6 @@ func (c *Compiler) modifyBGCtrl(is IniSection, sc *StateControllerBase, _ int8) 
 			modifyBGCtrl_sincolor, VT_Int, 2, false); err != nil {
 			return err
 		}
-		if err := c.paramValue(is, sc, "sinhue",
-			modifyBGCtrl_sinhue, VT_Int, 2, false); err != nil {
-			return err
-		}
 		if err := c.paramValue(is, sc, "invertall",
 			modifyBGCtrl_invertall, VT_Int, 1, false); err != nil {
 			return err
@@ -4284,10 +4162,6 @@ func (c *Compiler) modifyBGCtrl(is IniSection, sc *StateControllerBase, _ int8) 
 		}
 		if err := c.paramValue(is, sc, "color",
 			modifyBGCtrl_color, VT_Float, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "hue",
-			modifyBGCtrl_hue, VT_Float, 1, false); err != nil {
 			return err
 		}
 		return nil
@@ -4817,94 +4691,6 @@ func (c *Compiler) cameraCtrl(is IniSection, sc *StateControllerBase, _ int8) (S
 		}
 		if err := c.paramValue(is, sc, "pos",
 			cameraCtrl_pos, VT_Float, 2, false); err != nil {
-			return err
-		}
-		return nil
-	})
-	return *ret, err
-}
-
-func (c *Compiler) height(is IniSection, sc *StateControllerBase, _ int8) (StateController, error) {
-	ret, err := (*height)(sc), c.stateSec(is, func() error {
-		if err := c.paramValue(is, sc, "redirectid",
-			height_redirectid, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "value",
-			height_value, VT_Float, 2, true); err != nil {
-			return err
-		}
-		return nil
-	})
-	return *ret, err
-}
-
-func (c *Compiler) modifyChar(is IniSection, sc *StateControllerBase, _ int8) (StateController, error) {
-	ret, err := (*modifyChar)(sc), c.stateSec(is, func() error {
-		if err := c.paramValue(is, sc, "redirectid",
-			modifyChar_redirectid, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "lifemax",
-			modifyChar_lifemax, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "powermax",
-			modifyChar_powermax, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "dizzypointsmax",
-			modifyChar_dizzypointsmax, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "guardpointsmax",
-			modifyChar_guardpointsmax, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "teamside",
-			modifyChar_teamside, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.stateParam(is, "displayname", func(data string) error {
-			if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
-				return Error("Not enclosed in \"")
-			}
-			sc.add(modifyChar_displayname, sc.beToExp(BytecodeExp(data[1:len(data)-1])))
-			return nil
-		}); err != nil {
-			return err
-		}
-		if err := c.stateParam(is, "lifebarname", func(data string) error {
-			if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
-				return Error("Not enclosed in \"")
-			}
-			sc.add(modifyChar_lifebarname, sc.beToExp(BytecodeExp(data[1:len(data)-1])))
-			return nil
-		}); err != nil {
-			return err
-		}
-		return nil
-	})
-	return *ret, err
-}
-
-func (c *Compiler) assertCommand(is IniSection, sc *StateControllerBase, _ int8) (StateController, error) {
-	ret, err := (*assertCommand)(sc), c.stateSec(is, func() error {
-		if err := c.paramValue(is, sc, "redirectid",
-			assertCommand_redirectid, VT_Int, 1, false); err != nil {
-			return err
-		}
-		if err := c.stateParam(is, "name", func(data string) error {
-			if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
-				return Error("Not enclosed in \"")
-			}
-			sc.add(assertCommand_name, sc.beToExp(BytecodeExp(data[1:len(data)-1])))
-			return nil
-		}); err != nil {
-			return err
-		}
-		if err := c.paramValue(is, sc, "buffertime",
-			assertCommand_buffertime, VT_Int, 1, false); err != nil {
 			return err
 		}
 		return nil

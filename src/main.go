@@ -4,6 +4,7 @@ import (
 	_ "embed" // Support for go:embed resources
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"regexp"
 	"runtime"
@@ -56,7 +57,7 @@ func main() {
 	processCommandLine()
 
 	// Try reading stats
-	if _, err := os.ReadFile("save/stats.json"); err != nil {
+	if _, err := ioutil.ReadFile("save/stats.json"); err != nil {
 		// If there was an error reading, write an empty json file
 		f, err := os.Create("save/stats.json")
 		chk(err)
@@ -186,6 +187,7 @@ type configSettings struct {
 	BarRedLife                 bool
 	BarStun                    bool
 	Borderless                 bool
+	ComboExtraFrameWindow      int32
 	CommonAir                  []string
 	CommonCmd                  []string
 	CommonConst                []string
@@ -216,7 +218,7 @@ type configSettings struct {
 	GameWidth                  int32
 	GameHeight                 int32
 	GameFramerate              float32
-	InputButtonAssist          bool
+	InputButtonAssistWindow    int32
 	InputSOCDResolution        int32
 	IP                         map[string]string
 	LifeMul                    float32
@@ -297,7 +299,7 @@ func setupConfig() configSettings {
 		cfgPath = sys.cmdFlags["-config"]
 	}
 	// Load the config file, overwriting the defaults
-	if bytes, err := os.ReadFile(cfgPath); err == nil {
+	if bytes, err := ioutil.ReadFile(cfgPath); err == nil {
 		if len(bytes) >= 3 &&
 			bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf {
 			bytes = bytes[3:]
@@ -321,7 +323,7 @@ func setupConfig() configSettings {
 	tmp.WavChannels = Clamp(tmp.WavChannels, 1, 256)
 	// Save config file, indent with two spaces to match calls to json.encode() in the Lua code
 	cfg, _ := json.MarshalIndent(tmp, "", "  ")
-	chk(os.WriteFile(cfgPath, cfg, 0644))
+	chk(ioutil.WriteFile(cfgPath, cfg, 0644))
 
 	// Set each config property to the system object
 	sys.afterImageMax = tmp.MaxAfterImage
@@ -337,6 +339,7 @@ func setupConfig() configSettings {
 	sys.cam.ZoomMax = tmp.ForceStageZoomin
 	sys.cam.ZoomMin = tmp.ForceStageZoomout
 	sys.cam.ZoomSpeed = 12 - tmp.ZoomSpeed
+	sys.comboExtraFrameWindow = tmp.ComboExtraFrameWindow
 	sys.commonAir = tmp.CommonAir
 	sys.commonCmd = tmp.CommonCmd
 	sys.commonConst = tmp.CommonConst
@@ -360,7 +363,7 @@ func setupConfig() configSettings {
 	sys.gameHeight = tmp.GameHeight
 	sys.gameSpeed = tmp.GameFramerate / float32(tmp.Framerate)
 	sys.helperMax = tmp.MaxHelper
-	sys.inputButtonAssist = tmp.InputButtonAssist
+	sys.inputButtonAssistWindow = Clamp(tmp.InputButtonAssistWindow, 0, 60)
 	sys.inputSOCDresolution = Clamp(tmp.InputSOCDResolution, 0, 4)
 	sys.lifeMul = tmp.LifeMul / 100
 	sys.lifeShare = [...]bool{tmp.TeamLifeShare, tmp.TeamLifeShare}

@@ -3,7 +3,7 @@
 package main
 
 import (
-	glfw "github.com/go-gl/glfw/v3.3/glfw"
+	glfw "github.com/fyne-io/glfw-js"
 )
 
 type Input struct {
@@ -192,7 +192,7 @@ func (input *Input) IsJoystickPresent(joy int) bool {
 	if joy < 0 || joy >= len(input.joystick) {
 		return false
 	}
-	return input.joystick[joy].Present()
+	return input.joystick[joy].IsPresent()
 }
 
 func (input *Input) GetJoystickName(joy int) string {
