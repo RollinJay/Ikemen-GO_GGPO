@@ -84,6 +84,24 @@ func MaxF(arg ...float32) (max float32) {
 	return
 }
 
+func MinI(arg ...int) (min int) {
+	for i, x := range arg {
+		if i == 0 || x < min {
+			min = x
+		}
+	}
+	return
+}
+
+func MaxI(arg ...int) (max int) {
+	for i, x := range arg {
+		if i == 0 || x > max {
+			max = x
+		}
+	}
+	return
+}
+
 func Clamp(x, a, b int32) int32 {
 	return Max(a, Min(x, b))
 }
@@ -92,6 +110,40 @@ func ClampF(x, a, b float32) float32 {
 	return MaxF(a, MinF(x, b))
 }
 
+func Rad(f float32) float32 {
+	return float32(f * math.Pi / 180)
+}
+
+func Deg(f float32) float32 {
+	return float32(f * 180 / math.Pi)
+}
+
+func Cos(f float32) float32 {
+	return float32(math.Cos(float64(f)))
+}
+
+func Sin(f float32) float32 {
+	return float32(math.Sin(float64(f)))
+}
+func Sign(i int32) int32 {
+	if i < 0 {
+		return -1
+	} else if i > 0 {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+func SignF(f float32) float32 {
+	if f < 0 {
+		return -1
+	} else if f > 0 {
+		return 1
+	} else {
+		return 0
+	}
+}
 func Abs(i int32) int32 {
 	if i < 0 {
 		return -i
@@ -195,6 +247,81 @@ func Atof(str string) float64 {
 	}
 	return f
 }
+func RectRotate(x, y, w, h, cx, cy, angle float32) [][2]float32 {
+	rp := make([][2]float32, 4)
+	corners := [][2]float32{
+		{x, y},
+		{x + w, y},
+		{x + w, y + h},
+		{x, y + h},
+	}
+	for i := 0; i < 4; i++ {
+		p := corners[i]
+		tx := p[0] - cx
+		ty := p[1] - cy
+		newX := Cos(angle)*tx - Sin(angle)*ty + cx
+		newY := Sin(angle)*tx + Cos(angle)*ty + cy
+		rp[i] = [2]float32{newX, newY}
+	}
+	return rp
+}
+
+// Check if two rotated rectangles intersect.
+func RectIntersect(x1, y1, w1, h1, x2, y2, w2, h2, cx1, cy1, cx2, cy2, angle1, angle2 float32) bool {
+	rect1 := RectRotate(x1, y1, w1, h1, cx1, cy1, angle1)
+	rect2 := RectRotate(x2, y2, w2, h2, cx2, cy2, angle2)
+	projectionRange := func(rect [][2]float32, normal [2]float32) (min float32, max float32) {
+		min = math.MaxFloat32
+		max = -math.MaxFloat32
+		for _, p := range rect {
+			projected := normal[0]*p[0] + normal[1]*p[1]
+			if projected < min {
+				min = projected
+			}
+			if projected > max {
+				max = projected
+			}
+		}
+		return
+	}
+	for i1 := 0; i1 < len(rect1); i1++ {
+		i2 := (i1 + 1) % len(rect1)
+		p1 := rect1[i1]
+		p2 := rect1[i2]
+		nx := p2[1] - p1[1]
+		ny := p1[0] - p2[0]
+		minA, maxA := projectionRange(rect1, [2]float32{nx, ny})
+		minB, maxB := projectionRange(rect2, [2]float32{nx, ny})
+		if maxA < minB || maxB < minA {
+			return false
+		}
+	}
+	for i1 := 0; i1 < len(rect2); i1++ {
+		i2 := (i1 + 1) % len(rect2)
+		p1 := rect2[i1]
+		p2 := rect2[i2]
+		nx := p2[1] - p1[1]
+		ny := p1[0] - p2[0]
+		minA, maxA := projectionRange(rect1, [2]float32{nx, ny})
+		minB, maxB := projectionRange(rect2, [2]float32{nx, ny})
+		if maxA < minB || maxB < minA {
+			return false
+		}
+	}
+	return true
+}
+
+// Prevent overflow errors when converting float64 to int32
+func F64toI32(f float64) int32 {
+	if f >= float64(math.MaxInt32) {
+		return math.MaxInt32
+	}
+	if f <= float64(math.MinInt32) {
+		return math.MinInt32
+	}
+	return int32(f)
+}
+
 func readDigit(d string) (int32, bool) {
 	if len(d) == 0 || (len(d) >= 2 && d[0] == '0') {
 		return 0, false
@@ -623,7 +750,7 @@ func (l *Layout) Read(pre string, is IniSection) {
 }
 func (l *Layout) DrawSprite(x, y float32, ln int16, s *Sprite, fx *PalFX, fscale float32, window *[4]int32) {
 	if l.layerno == ln && s != nil {
-		//TODO: test "phantom pixel"
+		// TODO: test "phantom pixel"
 		if l.facing < 0 {
 			x += sys.lifebar.fnt_scale * sys.lifebarScale
 		}
@@ -641,7 +768,7 @@ func (l *Layout) DrawSprite(x, y float32, ln int16, s *Sprite, fx *PalFX, fscale
 func (l *Layout) DrawAnim(r *[4]int32, x, y, scl float32, ln int16,
 	a *Animation, palfx *PalFX) {
 	if l.layerno == ln {
-		//TODO: test "phantom pixel"
+		// TODO: test "phantom pixel"
 		if l.facing < 0 {
 			x += sys.lifebar.fnt_scale
 		}
@@ -651,13 +778,13 @@ func (l *Layout) DrawAnim(r *[4]int32, x, y, scl float32, ln int16,
 		a.Draw(r, x+l.offset[0], y+l.offset[1]+float32(sys.gameHeight-240),
 			scl, scl, l.scale[0]*float32(l.facing), l.scale[0]*float32(l.facing),
 			l.scale[1]*float32(l.vfacing), 0, Rotation{l.angle, 0, 0},
-			float32(sys.gameWidth-320)/2, palfx, false, 1, false, 1, 0, 0)
+			float32(sys.gameWidth-320)/2, palfx, false, 1, false, [2]float32{1, 1}, 0, 0, 0)
 	}
 }
 func (l *Layout) DrawText(x, y, scl float32, ln int16,
 	text string, f *Fnt, b, a int32, palfx *PalFX, frgba [4]float32) {
 	if l.layerno == ln {
-		//TODO: test "phantom pixel"
+		// TODO: test "phantom pixel"
 		if l.facing < 0 {
 			x += sys.lifebar.fnt_scale
 		}

@@ -26,21 +26,19 @@ addHotkey('7', true, false, false, true, true, 'toggleAI(7)')
 addHotkey('7', true, true, false, true, true, 'togglePlayer(7)')
 addHotkey('8', true, false, false, true, true, 'toggleAI(8)')
 addHotkey('8', true, true, false, true, true, 'togglePlayer(8)')
-addHotkey('F1', false, false, false, false, true, 'kill(2);kill(4);kill(6);kill(8);debugFlag(1)')
-addHotkey('F1', true, false, false, false, true, 'kill(1);kill(3);kill(5);kill(7);debugFlag(2)')
-addHotkey('F2', false, false, false, false, true, 'kill(1,1);kill(2,1);kill(3,1);kill(4,1);kill(5,1);kill(6,1);kill(7,1);kill(8,1);debugFlag(1);debugFlag(2)')
-addHotkey('F2', true, false, false, false, true, 'kill(1,1);kill(3,1);kill(5,1);kill(7,1);debugFlag(2)')
-addHotkey('F2', false, false, true, false, true, 'kill(2,1);kill(4,1);kill(6,1);kill(8,1);debugFlag(1)')
-addHotkey('F3', false, false, false, false, true, 'powMax(1);powMax(2);debugFlag(1);debugFlag(2)')
-addHotkey('F3', true, false, true, false, true, 'toggleMaxPowerMode();debugFlag(1);debugFlag(2)')
-addHotkey('F4', false, false, false, false, true, 'roundReset();closeMenu()')
-addHotkey('F4', false, false, true, false, true, 'reload();closeMenu()')
-addHotkey('F9', false, false, false, true, false, 'saveState()')
-addHotkey('F10', false, false, false, true, false, 'loadState()')
-addHotkey('F5', false, false, false, false, true, 'setTime(0);debugFlag(1);debugFlag(2)')
-addHotkey('SPACE', false, false, false, false, true, 'full(1);full(2);full(3);full(4);full(5);full(6);full(7);full(8);setTime(getRoundTime());debugFlag(1);debugFlag(2);clearConsole()')
-addHotkey('i', true, false, false, true, true, 'stand(1);stand(2);stand(3);stand(4);stand(5);stand(6);stand(7);stand(8)')
-addHotkey('PAUSE', false, false, false, true, false, 'togglePause();closeMenu()')
+addHotkey('F1', false, false, false, false, true, 'kill(2); kill(4); kill(6); kill(8); debugFlag(1)')
+addHotkey('F1', true, false, false, false, true, 'kill(1); kill(3); kill(5); kill(7); debugFlag(2)')
+addHotkey('F2', false, false, false, false, true, 'kill(1,1); kill(2,1); kill(3,1); kill(4,1); kill(5,1); kill(6,1); kill(7,1); kill(8,1); debugFlag(1); debugFlag(2)')
+addHotkey('F2', true, false, false, false, true, 'kill(1,1); kill(3,1); kill(5,1); kill(7,1); debugFlag(2)')
+addHotkey('F2', false, false, true, false, true, 'kill(2,1); kill(4,1); kill(6,1); kill(8,1); debugFlag(1)')
+addHotkey('F3', false, false, false, false, true, 'powMax(1); powMax(2); debugFlag(1); debugFlag(2)')
+addHotkey('F3', true, false, true, false, true, 'toggleMaxPowerMode(); debugFlag(1); debugFlag(2)')
+addHotkey('F4', false, false, false, false, true, 'roundReset(); closeMenu()')
+addHotkey('F4', false, false, true, false, true, 'reload(); closeMenu()')
+addHotkey('F5', false, false, false, false, true, 'setTime(0); debugFlag(1); debugFlag(2)')
+addHotkey('SPACE', false, false, false, false, true, 'full(1); full(2); full(3); full(4); full(5); full(6); full(7); full(8); setTime(getRoundTime()); debugFlag(1); debugFlag(2); clearConsole()')
+addHotkey('i', true, false, false, true, true, 'stand(1); stand(2); stand(3); stand(4); stand(5); stand(6); stand(7); stand(8)')
+addHotkey('PAUSE', false, false, false, true, false, 'togglePause(); closeMenu()')
 addHotkey('PAUSE', true, false, false, true, false, 'step()')
 addHotkey('SCROLLLOCK', false, false, false, true, false, 'step()')
 
@@ -122,6 +120,63 @@ function closeMenu()
 end
 
 --;===========================================================
+--; MCONSOLE EQUIVALENTS
+--;===========================================================
+function toggleDebugPause()
+	togglePause()
+	closeMenu()
+end
+
+function toggleMaxPowerModeAll() -- maxpowermode
+	toggleMaxPowerMode()
+	debugFlag(1)
+	debugFlag(2)
+end
+
+function matchReload() -- matchreset
+	reload()
+	closeMenu()
+end
+
+function powMaxAll()
+	powMax(1)
+	powMax(2)
+	debugFlag(1)
+	debugFlag(2)
+end
+
+function roundResetNow()
+	roundReset()
+	closeMenu()
+end
+
+function fullAll()
+	full(1)
+	full(2)
+	full(3)
+	full(4)
+	full(5)
+	full(6)
+	full(7)
+	full(8)
+	setTime(getRoundTime())
+	debugFlag(1)
+	debugFlag(2)
+	clearConsole()
+end
+
+function standAll()
+	stand(1)
+	stand(2)
+	stand(3)
+	stand(4)
+	stand(5)
+	stand(6)
+	stand(7)
+	stand(8)
+end
+
+--;===========================================================
 --; DEBUG STATUS INFO
 --;===========================================================
 function statusInfo(p)
@@ -151,7 +206,7 @@ function boolToInt(bool)
 end
 
 function engineInfo()
-	return string.format('Frames: %d, VSync: %d; Speed: %d/%d%%', tickcount(), vsync(), gameLogicSpeed(), gamespeed())
+	return string.format('Frames: %d, VSync: %d; Speed: %d/%d%%; FPS: %.3f', tickcount(), vsync(), gameLogicSpeed(), gamespeed(), gamefps())
 end
 
 function playerInfo()
@@ -161,7 +216,7 @@ end
 function actionInfo()
 	return string.format(
 		'ActionID: %d (P%d); SPR: %d,%d; ElemNo: %d/%d; Time: %d/%d (%d/%d)',
-		anim(), animowner(), spritegroup(), spritenumber(), animelemno(-1), animelemcount(), animelemtimesum(), animelemlength(), animtimesum(), animlength()
+		anim(), animplayerno(), animframe("group"), animframe("image"), animelemno(0), animelemcount(), animelemtime(animelemno(0)), animframe("time"), animtimesum(), animlength()
 	)
 end
 

@@ -60,6 +60,25 @@ local function f_externalShaderName()
 	return motif.option_info.menu_valuename_disabled
 end
 
+local function changeLanguageSetting(val)
+	sndPlay(motif.files.snd_data, motif.option_info.cursor_move_snd[1], motif.option_info.cursor_move_snd[2])
+	languageCounter = 0
+	currentLanguage = -1
+	for x, c in ipairs(motif.languages.languages) do
+		if c == config.Language then
+			currentLanguage = x
+		end
+		languageCounter = languageCounter + 1
+	end
+	if currentLanguage > 0 then
+		config.Language = motif.languages.languages[((currentLanguage + val) % languageCounter) + 1]
+	else
+		config.Language = motif.languages.languages[1] or "en"
+	end
+	options.modified = true
+	options.needReload = true
+end
+
 -- Associative elements table storing functions controlling behaviour of each
 -- option screen item. Can be appended via external module.
 options.t_itemname = {
@@ -150,6 +169,8 @@ options.t_itemname = {
 			config.GameHeight = 480
 			config.GameFramerate = 60
 			--config.IP = {}
+			config.KeepAspect = true
+			config.Language = "en"
 			config.LifeMul = 100
 			config.ListenPort = "7500"
 			config.LoseSimul = true
@@ -162,7 +183,7 @@ options.t_itemname = {
 			config.MaxPlayerProjectile = 256
 			--config.Modules = {}
 			--config.Motif = "data/system.def"
-			config.MSAA = false
+			config.MSAA = 0
 			config.NumSimul = {2, 4}
 			config.NumTag = {2, 4}
 			config.NumTurns = {2, 4}
@@ -194,6 +215,9 @@ options.t_itemname = {
 			config.VolumeMaster = 80
 			config.VolumeSfx = 80
 			config.VRetrace = 1
+			config.WindowScaleMode = true
+			config.enableModel = true
+			config.enableModelShadow = true
 			--config.WavChannels = 32
 			--config.WindowCentered = true
 			--config.WindowIcon = {"external/icons/IkemenCylia.png"}
@@ -203,7 +227,7 @@ options.t_itemname = {
 			--config.ZoomDelay = false
 			--config.ZoomSpeed = 1
 			loadLifebar(motif.files.fight)
-			main.timeFramesPerCount = framespercount()
+			main.timeFramesPerCount = fightscreenvar("time.framespercount")
 			main.f_updateRoundsNum()
 			main.f_setPlayers(config.Players, true)
 			for _, v in ipairs(options.t_vardisplayPointers) do
@@ -237,6 +261,10 @@ options.t_itemname = {
 			--setZoomSpeed(config.ZoomSpeed)
 			toggleFullscreen(config.Fullscreen)
 			toggleVsync(config.VRetrace)
+			toggleWindowScaleMode(config.WindowScaleMode)
+			toggleKeepAspect(config.KeepAspect)
+			toggleEnableModel(config.enableModel)
+			toggleEnableModelShadow(config.enableShadow)
 			options.modified = true
 			options.needReload = true
 		end
@@ -269,6 +297,19 @@ options.t_itemname = {
 			config.RoundTime = config.RoundTime - 1
 			t.items[item].vardisplay = options.f_definedDisplay(config.RoundTime, {[-1] = motif.option_info.menu_valuename_none}, config.RoundTime)
 			options.modified = true
+		end
+		return true
+	end,
+	--Language Setting
+	['language'] = function(t, item, cursorPosY, moveTxt)
+		if main.f_input(main.t_players, {'$F'}) then
+			changeLanguageSetting(0)
+			LanguageName = motif.languages[config.Language]
+			t.items[item].vardisplay = LanguageName or config.Language
+		elseif main.f_input(main.t_players, {'$B'}) then
+			changeLanguageSetting(-2)
+			LanguageName = motif.languages[config.Language]
+			t.items[item].vardisplay = LanguageName or config.Language
 		end
 		return true
 	end,
@@ -840,16 +881,56 @@ options.t_itemname = {
 	end,
 	--MSAA
 	['msaa'] = function(t, item, cursorPosY, moveTxt)
-		if main.f_input(main.t_players, {'$F', '$B', 'pal', 's'}) then
+		if main.f_input(main.t_players, {'$F'}) and config.MSAA < 16 then
 			sndPlay(motif.files.snd_data, motif.option_info.cursor_move_snd[1], motif.option_info.cursor_move_snd[2])
-			if config.MSAA then
-				config.MSAA = false
+			if config.MSAA == 0 then
+				config.MSAA = 2
 			else
-				config.MSAA = true
+				config.MSAA = config.MSAA * 2
 			end
-			t.items[item].vardisplay = options.f_boolDisplay(config.MSAA, motif.option_info.menu_valuename_enabled, motif.option_info.menu_valuename_disabled)
+			t.items[item].vardisplay = config.MSAA .. 'x'
 			options.modified = true
 			options.needReload = true
+		elseif main.f_input(main.t_players, {'$B'}) and config.MSAA > 1 then
+			sndPlay(motif.files.snd_data, motif.option_info.cursor_move_snd[1], motif.option_info.cursor_move_snd[2])
+			if config.MSAA == 2 then
+				config.MSAA = 0
+			else
+				config.MSAA = config.MSAA / 2
+			end
+			t.items[item].vardisplay = options.f_definedDisplay(config.MSAA, {[0] = motif.option_info.menu_valuename_disabled}, config.MSAA .. 'x')
+			options.modified = true
+			options.needReload = true
+		end
+		return true
+	end,
+	--Window scaling mode
+	['windowscalemode'] = function(t, item, cursorPosY, moveTxt)
+		if main.f_input(main.t_players, {'$F', '$B', 'pal', 's'}) then
+			sndPlay(motif.files.snd_data, motif.option_info.cursor_move_snd[1], motif.option_info.cursor_move_snd[2])
+			if config.WindowScaleMode then
+				config.WindowScaleMode = false
+			else
+				config.WindowScaleMode = true
+			end
+			toggleWindowScaleMode(config.WindowScaleMode)
+			t.items[item].vardisplay = options.f_boolDisplay(config.WindowScaleMode, motif.option_info.menu_valuename_enabled, motif.option_info.menu_valuename_disabled)
+			options.modified = true
+		end
+		return true
+	end,
+	--Keep Aspect Ratio
+	['keepaspect'] = function(t, item, cursorPosY, moveTxt)
+		if main.f_input(main.t_players, {'$F', '$B', 'pal', 's'}) then
+			sndPlay(motif.files.snd_data, motif.option_info.cursor_move_snd[1], motif.option_info.cursor_move_snd[2])
+			if config.KeepAspect then
+				config.KeepAspect = false
+			else
+				config.KeepAspect = true
+			end
+			toggleKeepAspect(config.KeepAspect)
+			t.items[item].vardisplay = options.f_boolDisplay(config.KeepAspect, motif.option_info.menu_valuename_enabled, motif.option_info.menu_valuename_disabled)
+			options.modified = true
 		end
 		return true
 	end,
@@ -884,6 +965,38 @@ options.t_itemname = {
 			options.modified = true
 			options.needReload = true
 			return false
+		end
+		return true
+	end,
+	--Enable Model
+	['enablemodel'] = function(t, item, cursorPosY, moveTxt)
+		if main.f_input(main.t_players, {'$F', '$B', 'pal', 's'}) then
+			sndPlay(motif.files.snd_data, motif.option_info.cursor_move_snd[1], motif.option_info.cursor_move_snd[2])
+			if config.EnableModel == true then
+				config.EnableModel = false
+			else
+				config.EnableModel = true
+			end
+			toggleEnableModel()
+			t.items[item].vardisplay = options.f_definedDisplay(config.EnableModel, {[true] = motif.option_info.menu_valuename_enabled}, motif.option_info.menu_valuename_disabled)
+			options.modified = true
+			options.needReload = true
+		end
+		return true
+	end,
+	--Enable Model Shadow
+	['enablemodelshadow'] = function(t, item, cursorPosY, moveTxt)
+		if main.f_input(main.t_players, {'$F', '$B', 'pal', 's'}) then
+			sndPlay(motif.files.snd_data, motif.option_info.cursor_move_snd[1], motif.option_info.cursor_move_snd[2])
+			if config.EnableModelShadow == true then
+				config.EnableModelShadow = false
+			else
+				config.EnableModelShadow = true
+			end
+			toggleEnableModel()
+			t.items[item].vardisplay = options.f_definedDisplay(config.EnableModelShadow, {[true] = motif.option_info.menu_valuename_enabled}, motif.option_info.menu_valuename_disabled)
+			options.modified = true
+			options.needReload = true
 		end
 		return true
 	end,
@@ -1298,6 +1411,12 @@ options.t_vardisplay = {
 	['difficulty'] = function()
 		return config.Difficulty
 	end,
+	['enablemodel'] = function()
+		return options.f_definedDisplay(config.EnableModel, {[true] = motif.option_info.menu_valuename_enabled}, motif.option_info.menu_valuename_disabled)
+	end,
+	['enablemodelshadow'] = function()
+		return options.f_definedDisplay(config.EnableModelShadow, {[true] = motif.option_info.menu_valuename_enabled}, motif.option_info.menu_valuename_disabled)
+	end,
 	['explodmax'] = function()
 		return config.MaxExplod
 	end,
@@ -1312,6 +1431,13 @@ options.t_vardisplay = {
 	end,
 	['helpermax'] = function()
 		return config.MaxHelper
+	end,
+	['keepaspect'] = function()
+		return options.f_boolDisplay(config.KeepAspect, motif.option_info.menu_valuename_enabled, motif.option_info.menu_valuename_disabled)
+	end,
+	['language'] = function()
+		sfs = motif.languages[config.Language]
+		return sfs or config.Language
 	end,
 	['lifemul'] = function()
 		return config.LifeMul .. '%'
@@ -1347,7 +1473,7 @@ options.t_vardisplay = {
 		return config.NumTurns[1]
 	end,
 	['msaa'] = function()
-		return options.f_boolDisplay(config.MSAA, motif.option_info.menu_valuename_enabled, motif.option_info.menu_valuename_disabled)
+		return options.f_definedDisplay(config.MSAA, {[0] = motif.option_info.menu_valuename_disabled}, config.MSAA .. 'x')
 	end,
 	['panningrange'] = function()
 		return config.PanningRange .. '%'
@@ -1444,6 +1570,9 @@ options.t_vardisplay = {
 	end,
 	['vretrace'] = function()
 		return options.f_definedDisplay(config.VRetrace, {[1] = motif.option_info.menu_valuename_enabled}, motif.option_info.menu_valuename_disabled)
+	end,
+	['windowscalemode'] = function()
+		return options.f_boolDisplay(config.WindowScaleMode, motif.option_info.menu_valuename_enabled, motif.option_info.menu_valuename_disabled)
 	end,
 }
 
@@ -1693,6 +1822,7 @@ function options.f_keyDefault()
 	resetRemapInput()
 end
 if config.FirstRun then
+	config.Language = motif.languages.languages[1] or "en"
 	options.f_keyDefault()
 end
 
@@ -1762,6 +1892,14 @@ function options.f_keyCfg(cfgType, controller, bgdef, skipClear)
 		--gamepad key detection
 		else
 			local tmp = getJoystickKey(joyNum)
+			local guid = getJoystickGUID(joyNum)
+
+			-- Fix the GUID so that configs are preserved between boots for macOS
+			if config[cfgType][player].GUID ~= guid then
+				config[cfgType][player].GUID = guid
+				options.modified = true
+			end
+
 			if tonumber(tmp) == nil then
 				btnReleased = true
 			elseif btnReleased then
@@ -1920,7 +2058,7 @@ function options.f_keyCfg(cfgType, controller, bgdef, skipClear)
 		clearColor(motif[bgdef].bgclearcolor[1], motif[bgdef].bgclearcolor[2], motif[bgdef].bgclearcolor[3])
 	end
 	--draw layerno = 0 backgrounds
-	bgDraw(motif[bgdef].bg, false)
+	bgDraw(motif[bgdef].bg, 0)
 	--draw menu box
 	if motif.option_info.menu_boxbg_visible == 1 then
 		for i = 1, 2 do
@@ -2167,7 +2305,7 @@ function options.f_keyCfg(cfgType, controller, bgdef, skipClear)
 		end
 	end
 	--draw layerno = 1 backgrounds
-	bgDraw(motif[bgdef].bg, true)
+	bgDraw(motif[bgdef].bg, 1)
 	main.f_cmdInput()
 	if not skipClear then
 		refresh()

@@ -107,6 +107,7 @@ func (pf *PalFX) getFxPal(pal []uint32, neg bool) []uint32 {
 		sub |= su << uint(i*8)
 	}
 	for i, c := range pal {
+		alpha := c & 0xff000000
 		if p.eInvertall {
 			c = ^c
 		}
@@ -122,7 +123,7 @@ func (pf *PalFX) getFxPal(pal []uint32, neg bool) []uint32 {
 		tmp = (tmp|uint32(-Btoi(tmp&0xff0000 != 0)<<8))&0xffff |
 			(((c>>16&0xff)+uint32(a[2]))*uint32(m[2])>>8)<<16
 		sys.workpal[i] = tmp | uint32(-Btoi(tmp&0xff000000 != 0)<<16) |
-			0xff000000
+			alpha
 	}
 	return sys.workpal
 }
@@ -236,7 +237,7 @@ func (pf *PalFX) synthesize(pfx PalFX, blending bool) {
 	pf.eInvertall = pf.eInvertall != pfx.eInvertall
 
 	if pfx.invertall {
-		//Char blend inverse
+		// Char blend inverse
 		if pfx.invertblend == 1 {
 			if blending && pf.invertblend > -3 {
 				pf.eInvertall = pf.invertall
@@ -262,7 +263,7 @@ func (pf *PalFX) synthesize(pfx PalFX, blending bool) {
 			}
 		}
 
-		//Bg blend inverse
+		// Bg blend inverse
 		if pf.invertblend == -3 {
 			if pf.eInvertall {
 				pf.eInvertblend = 3
@@ -724,7 +725,7 @@ func (s *Sprite) RlePcxDecode(rle []byte) (p []byte) {
 func (s *Sprite) read(f *os.File, sh *SffHeader, offset int64, datasize uint32,
 	nextSubheader uint32, prev *Sprite, pl *PaletteList, c00 bool) error {
 	if int64(nextSubheader) > offset {
-		// 最後以外datasizeを無視 / Ignore datasize except last
+		// Ignore datasize except last
 		datasize = nextSubheader - uint32(offset)
 	}
 	read := func(x interface{}) error {
@@ -770,7 +771,11 @@ func (s *Sprite) read(f *os.File, sh *SffHeader, offset int64, datasize uint32,
 			if err := read(rgb[:]); err != nil {
 				return err
 			}
-			pal[i] = uint32(255)<<24 | uint32(rgb[2])<<16 | uint32(rgb[1])<<8 | uint32(rgb[0])
+			var alpha byte = 255
+			if i == 0 {
+				alpha = 0
+			}
+			pal[i] = uint32(alpha)<<24 | uint32(rgb[2])<<16 | uint32(rgb[1])<<8 | uint32(rgb[0])
 		}
 	}
 	s.SetPxl(s.RlePcxDecode(px))
@@ -1090,7 +1095,7 @@ func (s *Sprite) Draw(x, y, xscale, yscale, angle float32, fx *PalFX, window *[4
 	rp := RenderParams{
 		s.Tex, s.PalTex, s.Size,
 		-x * sys.widthScale, -y * sys.heightScale, notiling,
-		xscale * sys.widthScale, xscale * sys.widthScale, yscale * sys.heightScale, 1, 0,
+		xscale * sys.widthScale, xscale * sys.widthScale, yscale * sys.heightScale, 1, 0, 1, 1,
 		Rotation{angle, 0, 0}, 0, sys.brightness*255>>8 | 1<<9, 0, fx, window, 0, 0, 0, 0,
 		-xscale * float32(s.Offset[0]), -yscale * float32(s.Offset[1]),
 	}
@@ -1101,7 +1106,7 @@ type Sff struct {
 	header  SffHeader
 	sprites map[[2]int16]*Sprite
 	palList PaletteList
-	//This is the sffCache key
+	// This is the sffCache key
 	filename string
 }
 type Palette struct {
@@ -1196,7 +1201,11 @@ func loadSff(filename string, char bool) (*Sff, error) {
 						return nil, err
 					}
 					if s.header.Ver2 == 0 {
-						rgba[3] = 255
+						if i == 0 {
+							rgba[3] = 0
+						} else {
+							rgba[3] = 255
+						}
 					}
 					pal[i] = uint32(rgba[3])<<24 | uint32(rgba[2])<<16 | uint32(rgba[1])<<8 | uint32(rgba[0])
 				}
@@ -1213,7 +1222,7 @@ func loadSff(filename string, char bool) (*Sff, error) {
 			}
 			if i <= MaxPalNo && i+1 == int(s.header.NumberOfPalettes) {
 				for j := i + 1; j < MaxPalNo; j++ {
-					delete(s.palList.PalTable, [...]int16{1, int16(j + 1)}) //余計なパレットを削除 / Remove extra palette
+					delete(s.palList.PalTable, [...]int16{1, int16(j + 1)}) // Remove extra palette
 				}
 			}
 		}
@@ -1245,7 +1254,7 @@ func loadSff(filename string, char bool) (*Sff, error) {
 					dst.shareCopy(src)
 				}
 			} else {
-				spriteList[i].palidx = 0 // 不正な sff の場合の index out of range 防止
+				spriteList[i].palidx = 0 // index out of range
 			}
 		} else {
 			switch s.header.Ver0 {
@@ -1332,7 +1341,7 @@ func preloadSff(filename string, char bool, preloadSpr map[[2]int16]bool) (*Sff,
 			if ok {
 				ok = sff.sprites[[...]int16{spriteList[i].Group, spriteList[i].Number}] == nil
 			}
-			//sprite
+			// sprite
 			if size == 0 {
 				if ok := preloadRef[int(indexOfPrevious)]; ok {
 					dst, src := spriteList[i], spriteList[int(indexOfPrevious)]
@@ -1341,7 +1350,7 @@ func preloadSff(filename string, char bool, preloadSpr map[[2]int16]bool) (*Sff,
 					}
 					spriteList[i].palidx = spriteList[int(indexOfPrevious)].palidx
 					//} else if int(indexOfPrevious) < i {
-					//TODO: read previously skipped sprite and palette
+					// TODO: read previously skipped sprite and palette
 				} else {
 					spriteList[i].palidx = 0 //index out of range
 				}
@@ -1359,7 +1368,7 @@ func preloadSff(filename string, char bool, preloadSpr map[[2]int16]bool) (*Sff,
 					}
 				}
 				if ok {
-					//palette
+					// palette
 					plXofs = xofs
 					if h.Ver0 == 1 {
 						spriteList[i].Pal = pl.Get(spriteList[i].palidx)
@@ -1392,7 +1401,11 @@ func preloadSff(filename string, char bool, preloadSpr map[[2]int16]bool) (*Sff,
 								return nil, nil, err
 							}
 							if h.Ver2 == 0 {
-								rgba[3] = 255
+								if j == 0 {
+									rgba[3] = 0
+								} else {
+									rgba[3] = 255
+								}
 							}
 							spriteList[i].Pal[j] = uint32(rgba[3])<<24 | uint32(rgba[2])<<16 | uint32(rgba[1])<<8 | uint32(rgba[0])
 						}
@@ -1418,7 +1431,7 @@ func preloadSff(filename string, char bool, preloadSpr map[[2]int16]bool) (*Sff,
 			shofs += 28
 		}
 	}
-	//selectable palettes
+	// selectable palettes
 	var selPal []int32
 	if h.Ver0 != 1 && char {
 		//for i := 0; i < MaxPalNo; i++ {
@@ -1445,7 +1458,7 @@ func (s *Sff) GetSprite(g, n int16) *Sprite {
 	return s.sprites[[...]int16{g, n}]
 }
 func (s *Sff) getOwnPalSprite(g, n int16, pl *PaletteList) *Sprite {
-	sys.runMainThreadTask() // テクスチャを生成 / Generate texture
+	sys.runMainThreadTask() // Generate texture
 	sp := s.GetSprite(g, n)
 	if sp == nil {
 		return nil
@@ -1466,7 +1479,7 @@ func captureScreen() {
 		y = i / (width * 4)
 		j = x + (height-1-y)*width*4
 		if i%4 == 3 {
-			pixdata[i] = 255 //アルファ値を255にする / Set the alpha value to 255
+			pixdata[i] = 255 // Set the alpha value to 255
 		}
 		img.Pix[j] = pixdata[i]
 	}

@@ -10,6 +10,7 @@ end
 --globally accessible temp data
 start.challenger = 0
 --local variables
+local didLoadStageBGM = false
 local restoreCursor = false
 local selScreenEnd = false
 local stageEnd = false
@@ -605,15 +606,8 @@ function start.f_setMusic(num, data)
 	end
 end
 
---remaps palette based on button press and character's keymap settings
-function start.f_reampPal(ref, num)
-	return start.f_getCharData(ref).pal_keymap[num] or num
-end
-
--- returns palette number
-function start.f_selectPal(ref, palno)
-	-- generate table with palette entries already used by this char ref
-	local t_assignedPals = {}
+-- generate table with palette entries already used by this char ref
+function start.f_setAssignedPal(ref, t_assignedPals)
 	for side = 1, 2 do
 		for k, v in pairs(start.p[side].t_selected) do
 			if v.ref == ref then
@@ -621,14 +615,39 @@ function start.f_selectPal(ref, palno)
 			end
 		end
 	end
+end
+
+--remaps palette based on button press and character's keymap settings
+function start.f_keyPalMap(ref, num, t_assignedPals)
+    local t_assignedPals = {}
+	start.f_setAssignedPal(ref, t_assignedPals)
+    local mappedPal = start.f_getCharData(ref).pal_keymap[num] or num
+    local totalPals = #start.f_getCharData(ref).pal
+	-- loop through the palette indices starting from mappedPal
+    for i = 0, totalPals - 1 do
+        -- calculate the current palette index, wrapping around if it exceeds totalPals
+        local currentPal = (mappedPal + i - 1) % totalPals + 1
+        -- check if the current palette is not already assigned
+        if not t_assignedPals[currentPal] then
+            return currentPal
+        end
+    end
+    -- if all palettes are assigned, return the mapped palette
+    return mappedPal
+end
+
+-- returns palette number
+function start.f_selectPal(ref, palno)
+    local t_assignedPals = {}
+    start.f_setAssignedPal(ref, t_assignedPals)
 	-- selected palette
 	if palno ~= nil and palno > 0 then
-		if not t_assignedPals[start.f_reampPal(ref, palno)] then
-			return start.f_reampPal(ref, palno)
+		if not t_assignedPals[start.f_keyPalMap(ref, palno)] then
+			return start.f_keyPalMap(ref, palno)
 		else
 			for _, v in ipairs(start.f_getCharData(ref).pal) do
-				if not t_assignedPals[start.f_reampPal(ref, v)] then
-					return start.f_reampPal(ref, v)
+				if not t_assignedPals[start.f_keyPalMap(ref, v)] then
+					return start.f_keyPalMap(ref, v)
 				end
 			end
 		end
@@ -1689,7 +1708,7 @@ function launchFight(data)
 		t.ai = data.ai or nil
 		t.vsscreen = main.f_arg(data.vsscreen, main.versusScreen)
 		t.victoryscreen = main.f_arg(data.victoryscreen, main.victoryScreen)
-		--t.frames = data.frames or framespercount()
+		--t.frames = data.frames or fightscreenvar("time.framespercount")
 		t.roundtime = data.time or nil
 		t.lua = data.lua or ''
 		t.stageNo = start.f_getStageRef(t.stage)
@@ -2001,7 +2020,7 @@ function start.f_selectScreen()
 		--draw clearcolor
 		clearColor(motif.selectbgdef.bgclearcolor[1], motif.selectbgdef.bgclearcolor[2], motif.selectbgdef.bgclearcolor[3])
 		--draw layerno = 0 backgrounds
-		bgDraw(motif.selectbgdef.bg, false)
+		bgDraw(motif.selectbgdef.bg, 0)
 		--draw title
 		main.txt_mainSelect:draw()
 		--draw portraits
@@ -2234,7 +2253,7 @@ function start.f_selectScreen()
 		-- hook
 		hook.run("start.f_selectScreen")
 		--draw layerno = 1 backgrounds
-		bgDraw(motif.selectbgdef.bg, true)
+		bgDraw(motif.selectbgdef.bg, 1)
 		--draw fadein / fadeout
 		main.f_fadeAnim(motif.select_info)
 		--frame transition
@@ -2644,8 +2663,9 @@ function start.f_selectMenu(side, cmd, player, member, selectState)
 					-- if select anim differs from done anim and coop or pX.face.num allows to display more than 1 portrait or it's the last team member
 					local done_anim = motif.select_info['p' .. side .. '_member' .. member .. '_face_done_anim'] or motif.select_info['p' .. side .. '_face_done_anim']
 					if done_anim ~= -1 and start.p[side].t_selTemp[member].anim ~= done_anim and (main.coop or motif.select_info['p' .. side .. '_face_num'] > 1 or main.f_tableLength(start.p[side].t_selected) + 1 == start.p[side].numChars) then
-						start.p[side].t_selTemp[member].anim_data = start.f_animGet(start.c[player].selRef, side, member, motif.select_info, '_face', '_done', false) or start.p[side].t_selTemp[member].anim_data
-						if start.p[side].t_selTemp[member].anim_data ~= nil then
+						local a = start.f_animGet(start.c[player].selRef, side, member, motif.select_info, '_face', '_done', false)
+						if a then
+							start.p[side].t_selTemp[member].anim_data = a
 							start.p[side].screenDelay = math.min(120, math.max(start.p[side].screenDelay, animGetLength(start.p[side].t_selTemp[member].anim_data)))
 						end
 					end
@@ -2877,7 +2897,7 @@ function start.f_selectVersus(active, t_orderSelect)
 		--draw clearcolor
 		clearColor(motif.versusbgdef.bgclearcolor[1], motif.versusbgdef.bgclearcolor[2], motif.versusbgdef.bgclearcolor[3])
 		--draw layerno = 0 backgrounds
-		bgDraw(motif.versusbgdef.bg, false)
+		bgDraw(motif.versusbgdef.bg, 0)
 		--draw portraits and order icons
 		for side = 1, 2 do
 			start.f_drawPortraits(main.f_remapTable(start.p[side].t_selTemp, start.t_orderRemap[side]), side, motif.vs_screen, '', false, t_icon[side])
@@ -2932,10 +2952,16 @@ function start.f_selectVersus(active, t_orderSelect)
 		if not done and motif.vs_screen.timer_count ~= -1 and timerActive and counter >= 0 then
 			timerCount, timerActive = main.f_drawTimer(timerCount, motif.vs_screen, 'timer_', txt_timerVS)
 		end
+		--credits
+		if main.credits ~= -1 and getKey(motif.attract_mode.credits_key) then
+			sndPlay(motif.files.snd_data, motif.attract_mode.credits_snd[1], motif.attract_mode.credits_snd[2])
+			main.credits = main.credits + 1
+			resetKey()
+		end
 		-- hook
 		hook.run("start.f_selectVersus")
 		--draw layerno = 1 backgrounds
-		bgDraw(motif.versusbgdef.bg, true)
+		bgDraw(motif.versusbgdef.bg, 1)
 		--draw fadein / fadeout
 		for side = 1, 2 do
 			if main.fadeType == 'fadein' and (
@@ -3149,13 +3175,13 @@ function start.f_result()
 	--draw text at layerno = 0
 	f_drawTextAtLayerNo(t, start.t_result.prefix, start.t_result.resultText, start.t_result.txt, 0)
 	--draw layerno = 0 backgrounds
-	bgDraw(motif[start.t_result.bgdef].bg, false)
+	bgDraw(motif[start.t_result.bgdef].bg, 0)
 	--draw text at layerno = 1
 	f_drawTextAtLayerNo(t, start.t_result.prefix, start.t_result.resultText, start.t_result.txt, 1)
 	-- hook
 	hook.run("start.f_result")
 	--draw layerno = 1 backgrounds
-	bgDraw(motif[start.t_result.bgdef].bg, true)
+	bgDraw(motif[start.t_result.bgdef].bg, 1)
 	--draw text at layerno = 2
 	f_drawTextAtLayerNo(t, start.t_result.prefix, start.t_result.resultText, start.t_result.txt, 2)
 	--draw fadein / fadeout
@@ -3340,7 +3366,7 @@ function start.f_victory()
 	--draw overlay
 	overlay_winquote:draw()
 	--draw layerno = 0 backgrounds
-	bgDraw(motif.victorybgdef.bg, false)
+	bgDraw(motif.victorybgdef.bg, 0)
 	--draw portraits (starting from losers)
 	for side = 2, 1, -1 do
 		start.f_drawPortraits(start.t_victory['team' .. side], side, motif.victory_screen, '', false)
@@ -3376,7 +3402,7 @@ function start.f_victory()
 	-- hook
 	hook.run("start.f_victory")
 	--draw layerno = 1 backgrounds
-	bgDraw(motif.victorybgdef.bg, true)
+	bgDraw(motif.victorybgdef.bg, 1)
 	--draw fadein / fadeout
 	if main.fadeType == 'fadein' and ((start.t_victory.textend and start.t_victory.counter - start.t_victory.textcnt >= motif.victory_screen.time) or main.f_input(main.t_players, {'pal', 's'})) then
 		main.f_fadeReset('fadeout', motif.victory_screen)
@@ -3482,7 +3508,7 @@ function start.f_continue()
 	--draw overlay
 	overlay_continue:draw()
 	--draw layerno = 0 backgrounds
-	bgDraw(motif.continuebgdef.bg, false)
+	bgDraw(motif.continuebgdef.bg, 0)
 	if motif.continue_screen.legacymode_enabled == 0 then --extended continue screen parameters
 		if not start.t_continue.selected then
 			if start.t_continue.counter < motif.continue_screen.counter_end_skiptime then
@@ -3653,7 +3679,7 @@ function start.f_continue()
 	-- hook
 	hook.run("start.f_continue")
 	--draw layerno = 1 backgrounds
-	bgDraw(motif.continuebgdef.bg, true)
+	bgDraw(motif.continuebgdef.bg, 1)
 	--draw fadein / fadeout
 	if main.fadeType == 'fadein' and (start.t_continue.counter > motif.continue_screen.counter_endtime or start.t_continue.continue or (main.f_input({1}, start.t_continue.t_btnSkip) and (motif.continue_screen.legacymode_enabled == 1 or start.t_continue.counter >= motif.continue_screen.counter_end_skiptime))) then
 		main.f_fadeReset('fadeout', motif.continue_screen)
@@ -3758,7 +3784,7 @@ function start.f_hiscore(t, playMusic, place, infinite)
 	end
 	start.t_hiscore.counter = start.t_hiscore.counter + 1
 	--draw layerno = 0 backgrounds
-	bgDraw(motif.hiscorebgdef.bg, false)
+	bgDraw(motif.hiscorebgdef.bg, 0)
 	--draw overlay
 	overlay_hiscore:draw()
 	--draw title
@@ -3899,7 +3925,7 @@ function start.f_hiscore(t, playMusic, place, infinite)
 	-- hook
 	hook.run("start.f_hiscore")
 	--draw layerno = 1 backgrounds
-	bgDraw(motif.hiscorebgdef.bg, true)
+	bgDraw(motif.hiscorebgdef.bg, 1)
 	--draw fadein / fadeout
 	if main.fadeType == 'fadein' and not main.fadeActive and not start.t_hiscore.input and (((not infinite and start.t_hiscore.counter >= motif.hiscore_info.time) or (motif.attract_mode.enabled == 0 and main.f_input(main.t_players, {'pal', 's'}))) or (motif.attract_mode.enabled == 1 and main.credits > 0)) then
 		main.f_fadeReset('fadeout', motif.hiscore_info)
@@ -3966,7 +3992,7 @@ function start.f_challenger()
 		f_drawTextAtLayerNo(motif.challenger_info, 'text', {motif.challenger_info.text_text}, txt_challenger, 0)
 	end
 	--draw layerno = 0 backgrounds
-	bgDraw(motif.challengerbgdef.bg, false)
+	bgDraw(motif.challengerbgdef.bg, 0)
 	--draw bg
 	if start.t_challenger.counter >= motif.challenger_info.bg_displaytime then
 		animUpdate(motif.challenger_info.bg_data)
@@ -3979,7 +4005,7 @@ function start.f_challenger()
 	-- hook
 	hook.run("start.f_challenger")
 	--draw layerno = 1 backgrounds
-	bgDraw(motif.challengerbgdef.bg, true)
+	bgDraw(motif.challengerbgdef.bg, 1)
 	--draw text at layerno = 2
 	if start.t_challenger.counter >= motif.challenger_info.text_displaytime then
 		f_drawTextAtLayerNo(motif.challenger_info, 'text', {motif.challenger_info.text_text}, txt_challenger, 2)
@@ -4010,8 +4036,12 @@ function start.f_stageMusic()
 	if gamemode('demo') and motif.demo_mode.fight_playbgm == 0 then
 		return
 	end
-	-- bgmusic / bgmusic.roundX / bgmusic.final
+	-- Reset
 	if roundstart() then
+		didLoadStageBGM = false
+	end
+	-- bgmusic / bgmusic.roundX / bgmusic.final
+	if (stagetime() > 0 and not didLoadStageBGM) then
 		-- only if the round is not restarted
 		if start.bgmround ~= roundno() then
 			start.bgmround = roundno()
@@ -4028,13 +4058,16 @@ function start.f_stageMusic()
 			-- final round music assigned
 			if roundNo > 1 and roundtype() == 3 and start.t_music.musicfinal.bgmusic ~= nil then
 				main.f_playBGM(false, start.t_music.musicfinal.bgmusic, 1, start.t_music.musicfinal.bgmvolume, start.t_music.musicfinal.bgmloopstart, start.t_music.musicfinal.bgmloopend)
+				didLoadStageBGM = true
 			-- music exists for this round
 			elseif start.t_music.music[roundNo] ~= nil then
 				-- interrupt same track playing only on round 1 of first match (skips continuous survival etc.)
 				main.f_playBGM(matchno() == 1 and roundNo == 1, start.t_music.music[roundNo].bgmusic, 1, start.t_music.music[roundNo].bgmvolume, start.t_music.music[roundNo].bgmloopstart, start.t_music.music[roundNo].bgmloopend)
+				didLoadStageBGM = true
 			-- stop versus screen track or life bgm even if stage music is not assigned
 			elseif start.bgmround == 1 or start.bgmstate == 1 then
 				main.f_playBGM(true)
+				didLoadStageBGM = true
 			end
 		end
 		start.bgmstate = 0

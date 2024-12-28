@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -30,11 +31,15 @@ func chk(err error) {
 }
 
 // Extended version of 'chk()'
-func chkEX(err error, txt string) {
+func chkEX(err error, txt string, crash bool) bool {
 	if err != nil {
 		ShowErrorDialog(txt + err.Error())
-		panic(Error(txt + err.Error()))
+		if crash {
+			panic(Error(txt + err.Error()))
+		}
+		return true
 	}
+	return false
 }
 
 func createLog(p string) *os.File {
@@ -49,6 +54,18 @@ func closeLog(f *os.File) {
 }
 
 func main() {
+
+	exePath, err := os.Executable()
+	if err != nil {
+		fmt.Println("Error getting executable path:", err)
+	} else {
+		// Change the context for Darwin if we're in an app bundle
+		if isRunningInsideAppBundle(exePath) {
+			os.Chdir(path.Dir(exePath))
+			os.Chdir("../../../")
+		}
+	}
+
 	// Make save directories, if they don't exist
 	os.Mkdir("save", os.ModeSticky|0755)
 	os.Mkdir("save/replays", os.ModeSticky|0755)
@@ -114,7 +131,7 @@ func processCommandLine() {
 		sys.cmdFlags = make(map[string]string)
 		key := ""
 		player := 1
-		r1, _ := regexp.Compile("^-[h%?]")
+		r1, _ := regexp.Compile("^-[h%?]$")
 		r2, _ := regexp.Compile("^-")
 		// Loop through arguments
 		for _, a := range os.Args[1:] {
@@ -126,6 +143,8 @@ func processCommandLine() {
 -r <path>               Loads motif <path>. eg. -r motifdir or -r motifdir/system.def
 -lifebar <path>         Loads lifebar <path>. eg. -lifebar data/fight.def
 -storyboard <path>      Loads storyboard <path>. eg. -storyboard chars/kfm/intro.def
+-width <num>            Overrides game window width
+-height <num>           Overrides game window height
 
 Quick VS Options:
 -p<n> <playername>      Loads player n, eg. -p3 kfm
@@ -206,8 +225,9 @@ type configSettings struct {
 	Difficulty                 int
 	EscOpensMenu               bool
 	ExternalShaders            []string
+	EnableModel                bool
+	EnableModelShadow          bool
 	FirstRun                   bool
-	FontShaderVer              uint
 	ForceStageZoomin           float32
 	ForceStageZoomout          float32
 	Framerate                  int32
@@ -221,6 +241,9 @@ type configSettings struct {
 	InputButtonAssistWindow    int32
 	InputSOCDResolution        int32
 	IP                         map[string]string
+	KeepAspect                 bool
+	WindowScaleMode            bool
+	Language                   string
 	LifeMul                    float32
 	ListenPort                 string
 	LoseSimul                  bool
@@ -233,11 +256,12 @@ type configSettings struct {
 	MaxPlayerProjectile        int
 	Modules                    []string
 	Motif                      string
-	MSAA                       bool
+	MSAA                       int32
 	NumSimul                   [2]int
 	NumTag                     [2]int
 	NumTurns                   [2]int
 	PanningRange               float32
+	PauseMasterVolume          int
 	Players                    int
 	PngSpriteFilter            bool
 	PostProcessingShader       int32
@@ -275,10 +299,12 @@ type configSettings struct {
 	ZoomSpeed                  float32
 	KeyConfig                  []struct {
 		Joystick int
+		GUID     string
 		Buttons  []interface{}
 	}
 	JoystickConfig []struct {
 		Joystick int
+		GUID     string
 		Buttons  []interface{}
 	}
 	RollbackConfig RollbackConfig
@@ -304,7 +330,7 @@ func setupConfig() configSettings {
 			bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf {
 			bytes = bytes[3:]
 		}
-		chkEX(json.Unmarshal(bytes, &tmp), "Error while loading the config file.\n")
+		chkEX(json.Unmarshal(bytes, &tmp), "Error while loading the config file.\n", true)
 	}
 	// Fix incorrect settings (default values saved into config.json)
 	switch tmp.AudioSampleRate {
@@ -313,6 +339,7 @@ func setupConfig() configSettings {
 		tmp.AudioSampleRate = 44100
 	}
 	tmp.Framerate = Clamp(tmp.Framerate, 1, 840)
+	tmp.PauseMasterVolume = int(Clamp(int32(tmp.PauseMasterVolume), 0, 100))
 	tmp.MaxBgmVolume = int(Clamp(int32(tmp.MaxBgmVolume), 100, 250))
 	tmp.NumSimul[0] = int(Clamp(int32(tmp.NumSimul[0]), 2, int32(MaxSimul)))
 	tmp.NumSimul[1] = int(Clamp(int32(tmp.NumSimul[1]), int32(tmp.NumSimul[0]), int32(MaxSimul)))
@@ -325,12 +352,22 @@ func setupConfig() configSettings {
 	cfg, _ := json.MarshalIndent(tmp, "", "  ")
 	chk(ioutil.WriteFile(cfgPath, cfg, 0644))
 
+	// If given width/height arguments, override config's width/height here
+	if _, wok := sys.cmdFlags["-width"]; wok {
+		var w, _ = strconv.ParseInt(sys.cmdFlags["-width"], 10, 32)
+		tmp.GameWidth = int32(w)
+	}
+	if _, hok := sys.cmdFlags["-height"]; hok {
+		var h, _ = strconv.ParseInt(sys.cmdFlags["-height"], 10, 32)
+		tmp.GameHeight = int32(h)
+	}
+
 	// Set each config property to the system object
 	sys.afterImageMax = tmp.MaxAfterImage
 	sys.allowDebugKeys = tmp.DebugKeys
 	sys.allowDebugMode = tmp.DebugMode
 	sys.audioDucking = tmp.AudioDucking
-	Mp3SampleRate = int(tmp.AudioSampleRate)
+	sys.audioSampleRate = tmp.AudioSampleRate
 	sys.bgmVolume = tmp.VolumeBgm
 	sys.maxBgmVolume = tmp.MaxBgmVolume
 	sys.borderless = tmp.Borderless
@@ -350,10 +387,11 @@ func setupConfig() configSettings {
 	sys.clsnDarken = tmp.DebugClsnDarken
 	sys.consoleRows = tmp.DebugConsoleRows
 	sys.controllerStickSensitivity = tmp.ControllerStickSensitivity
+	sys.enableModel = tmp.EnableModel
+	sys.enableModelShadow = tmp.EnableModelShadow
 	sys.explodMax = tmp.MaxExplod
 	sys.externalShaderList = tmp.ExternalShaders
-	sys.fontShaderVer = tmp.FontShaderVer
-	// Resolution stuff
+	// Resoluion stuff
 	sys.fullscreen = tmp.Fullscreen
 	sys.fullscreenRefreshRate = tmp.FullscreenRefreshRate
 	sys.fullscreenWidth = tmp.FullscreenWidth
@@ -362,16 +400,23 @@ func setupConfig() configSettings {
 	sys.gameWidth = tmp.GameWidth
 	sys.gameHeight = tmp.GameHeight
 	sys.gameSpeed = tmp.GameFramerate / float32(tmp.Framerate)
+	sys.keepAspect = tmp.KeepAspect
+	sys.windowScaleMode = tmp.WindowScaleMode
 	sys.helperMax = tmp.MaxHelper
 	sys.inputButtonAssistWindow = Clamp(tmp.InputButtonAssistWindow, 0, 60)
 	sys.inputSOCDresolution = Clamp(tmp.InputSOCDResolution, 0, 4)
+	sys.language = tmp.Language
 	sys.lifeMul = tmp.LifeMul / 100
 	sys.lifeShare = [...]bool{tmp.TeamLifeShare, tmp.TeamLifeShare}
 	sys.listenPort = tmp.ListenPort
 	sys.loseSimul = tmp.LoseSimul
 	sys.loseTag = tmp.LoseTag
 	sys.masterVolume = tmp.VolumeMaster
+	if tmp.MSAA <= -1 {
+		tmp.MSAA = 0
+	}
 	sys.multisampleAntialiasing = tmp.MSAA
+	sys.pauseMasterVolume = tmp.PauseMasterVolume
 	sys.panningRange = tmp.PanningRange
 	sys.playerProjectileMax = tmp.MaxPlayerProjectile
 	sys.postProcessingShader = tmp.PostProcessingShader
@@ -410,7 +455,7 @@ func setupConfig() configSettings {
 			stoki(b[3].(string)), stoki(b[4].(string)), stoki(b[5].(string)),
 			stoki(b[6].(string)), stoki(b[7].(string)), stoki(b[8].(string)),
 			stoki(b[9].(string)), stoki(b[10].(string)), stoki(b[11].(string)),
-			stoki(b[12].(string)), stoki(b[13].(string))})
+			stoki(b[12].(string)), stoki(b[13].(string)), kc.GUID, false})
 	}
 	if _, ok := sys.cmdFlags["-nojoy"]; !ok {
 		for _, jc := range tmp.JoystickConfig {
@@ -420,7 +465,7 @@ func setupConfig() configSettings {
 				Atoi(b[3].(string)), Atoi(b[4].(string)), Atoi(b[5].(string)),
 				Atoi(b[6].(string)), Atoi(b[7].(string)), Atoi(b[8].(string)),
 				Atoi(b[9].(string)), Atoi(b[10].(string)), Atoi(b[11].(string)),
-				Atoi(b[12].(string)), Atoi(b[13].(string))})
+				Atoi(b[12].(string)), Atoi(b[13].(string)), jc.GUID, false})
 		}
 	}
 	sys.rollbackConfig = tmp.RollbackConfig

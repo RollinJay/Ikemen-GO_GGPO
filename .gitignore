@@ -58,3 +58,4 @@ bin/*
 
 # Compilation files
 src/*.syso
+*.png

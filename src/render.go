@@ -37,7 +37,8 @@ func (r *Rotation) IsZero() bool {
 
 // Tiling holds tiling parameters
 type Tiling struct {
-	x, y, sx, sy int32
+	xflag, yflag       int32
+	xspacing, yspacing int32
 }
 
 var notiling = Tiling{}
@@ -54,6 +55,7 @@ type RenderParams struct {
 	xts, xbs float32
 	ys, vs   float32
 	rxadd    float32
+	xas, yas float32
 	rot      Rotation
 	// Transparency, masking and palette effects
 	tint  uint32 // Sprite tint for shadows
@@ -89,18 +91,17 @@ func drawQuads(modelview mgl.Mat4, x1, y1, x2, y2, x3, y3, x4, y4 float32) {
 }
 
 // Render a quad with optional horizontal tiling
-func rmTileHSub(modelview mgl.Mat4, x1, y1, x2, y2, x3, y3, x4, y4, width float32,
-	tl Tiling, rcx float32) {
+func rmTileHSub(modelview mgl.Mat4, x1, y1, x2, y2, x3, y3, x4, y4, dy, width float32, rp RenderParams) {
 	//            p3
 	//    p4 o-----o-----o- - -o
 	//      /      |      \     ` .
 	//     /       |       \       `.
 	//    o--------o--------o- - - - o
 	//   p1         p2
-	topdist := (x3 - x4) * (1 + float32(tl.sx)/width)
-	botdist := (x2 - x1) * (1 + float32(tl.sx)/width)
+	topdist := (x3 - x4) * (((float32(rp.tile.xspacing) + width) / rp.xas) / width)
+	botdist := (x2 - x1) * (((float32(rp.tile.xspacing) + width) / rp.xas) / width)
 	if AbsF(topdist) >= 0.01 {
-		db := (x4 - rcx) * (botdist - topdist) / AbsF(topdist)
+		db := (x4 - rp.rcx) * (botdist - topdist) / AbsF(topdist)
 		x1 += db
 		x2 += db
 	}
@@ -108,29 +109,38 @@ func rmTileHSub(modelview mgl.Mat4, x1, y1, x2, y2, x3, y3, x4, y4, width float3
 	// Compute left/right tiling bounds (or right/left when topdist < 0)
 	xmax := float32(sys.scrrect[2])
 	left, right := int32(0), int32(1)
-	if topdist >= 0.01 {
-		left = 1 - int32(math.Ceil(float64(MaxF(x3/topdist, x2/botdist))))
-		right = int32(math.Ceil(float64(MaxF((xmax-x4)/topdist, (xmax-x1)/botdist))))
-	} else if topdist <= -0.01 {
-		left = 1 - int32(math.Ceil(float64(MaxF((xmax-x3)/-topdist, (xmax-x2)/-botdist))))
-		right = int32(math.Ceil(float64(MaxF(x4/-topdist, x1/-botdist))))
-	}
-
-	if tl.x != 1 {
-		left = 0
-		right = Min(right, Max(tl.x, 1))
+	if rp.tile.xflag != 0 {
+		if topdist >= 0.01 {
+			left = 1 - int32(math.Ceil(float64(MaxF(x3/topdist, x2/botdist))))
+			right = int32(math.Ceil(float64(MaxF((xmax-x4)/topdist, (xmax-x1)/botdist))))
+		} else if topdist <= -0.01 {
+			left = 1 - int32(math.Ceil(float64(MaxF((xmax-x3)/-topdist, (xmax-x2)/-botdist))))
+			right = int32(math.Ceil(float64(MaxF(x4/-topdist, x1/-botdist))))
+		}
+		if rp.tile.xflag != 1 {
+			left = 0
+			right = Min(right, Max(rp.tile.xflag, 1))
+		}
 	}
 
 	// Draw all quads in one loop
 	for n := left; n < right; n++ {
 		x1d, x2d := x1+float32(n)*botdist, x2+float32(n)*botdist
 		x3d, x4d := x3+float32(n)*topdist, x4+float32(n)*topdist
-		drawQuads(modelview, x1d, y1, x2d, y2, x3d, y3, x4d, y4)
+		mat := modelview
+		if !rp.rot.IsZero() {
+			mat = mat.Mul4(mgl.Translate3D(rp.rcx+float32(n)*botdist, rp.rcy+dy, 0))
+			//modelview = modelview.Mul4(mgl.Scale3D(1, rp.vs, 1))
+			mat = mat.Mul4(mgl.Rotate3DZ(rp.rot.angle * math.Pi / 180.0).Mat4())
+			mat = mat.Mul4(mgl.Translate3D(-(rp.rcx + float32(n)*botdist), -(rp.rcy + dy), 0))
+		}
+
+		drawQuads(mat, x1d, y1, x2d, y2, x3d, y3, x4d, y4)
 	}
 }
 
 func rmTileSub(modelview mgl.Mat4, rp RenderParams) {
-	x1, y1 := rp.x+rp.rxadd*rp.ys*float32(rp.size[1]), rp.rcy+((rp.y-rp.ys*float32(rp.size[1]))-rp.rcy)*rp.vs
+	x1, y1 := rp.x, rp.rcy+((rp.y-rp.ys*float32(rp.size[1]))-rp.rcy)*rp.vs
 	x2, y2 := x1+rp.xbs*float32(rp.size[0]), y1
 	x3, y3 := rp.x+rp.xts*float32(rp.size[0]), rp.rcy+(rp.y-rp.rcy)*rp.vs
 	x4, y4 := rp.x, y3
@@ -140,21 +150,18 @@ func rmTileSub(modelview mgl.Mat4, rp RenderParams) {
 	//} else {
 	//	pers = AbsF(rp.xbs) / AbsF(rp.xts)
 	//}
-	if !rp.rot.IsZero() {
-		//	kaiten(&x1, &y1, float64(agl), rcx, rcy, vs)
-		//	kaiten(&x2, &y2, float64(agl), rcx, rcy, vs)
-		//	kaiten(&x3, &y3, float64(agl), rcx, rcy, vs)
-		//	kaiten(&x4, &y4, float64(agl), rcx, rcy, vs)
+	if !rp.rot.IsZero() && rp.tile.xflag == 0 && rp.tile.yflag == 0 {
+
 		if rp.vs != 1 {
 			y1 = rp.rcy + ((rp.y - rp.ys*float32(rp.size[1])) - rp.rcy)
 			y2 = y1
-			y3 = rp.rcy + (rp.y - rp.rcy)
+			y3 = rp.y
 			y4 = y3
 		}
 		if rp.projectionMode == 0 {
 			modelview = modelview.Mul4(mgl.Translate3D(rp.rcx, rp.rcy, 0))
 		} else if rp.projectionMode == 1 {
-			//This is the inverse of the orthographic projection matrix
+			// This is the inverse of the orthographic projection matrix
 			matrix := mgl.Mat4{float32(sys.scrrect[2] / 2.0), 0, 0, 0, 0, float32(sys.scrrect[3] / 2), 0, 0, 0, 0, -65535, 0, float32(sys.scrrect[2] / 2), float32(sys.scrrect[3] / 2), 0, 1}
 			modelview = modelview.Mul4(mgl.Translate3D(0, -float32(sys.scrrect[3]), rp.fLength))
 			modelview = modelview.Mul4(matrix)
@@ -170,6 +177,15 @@ func rmTileSub(modelview mgl.Mat4, rp RenderParams) {
 			modelview = modelview.Mul4(mgl.Translate3D(rp.xOffset, -rp.yOffset, -rp.fLength))
 		}
 
+		// Apply shear matrix before rotation
+		shearMatrix := mgl.Mat4{
+			1, 0, 0, 0,
+			rp.rxadd, 1, 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1}
+		modelview = modelview.Mul4(shearMatrix)
+		modelview = modelview.Mul4(mgl.Translate3D(rp.rxadd*rp.ys*float32(rp.size[1]), 0, 0))
+
 		modelview = modelview.Mul4(mgl.Scale3D(1, rp.vs, 1))
 		modelview = modelview.Mul4(
 			mgl.Rotate3DX(-rp.rot.xangle * math.Pi / 180.0).Mul3(
@@ -180,10 +196,14 @@ func rmTileSub(modelview mgl.Mat4, rp RenderParams) {
 		drawQuads(modelview, x1, y1, x2, y2, x3, y3, x4, y4)
 		return
 	}
-	if rp.tile.y == 1 && rp.xbs != 0 {
+	if rp.tile.yflag == 1 && rp.xbs != 0 {
+		x1 += rp.rxadd * rp.ys * float32(rp.size[1])
+		x2 = x1 + rp.xbs*float32(rp.size[0])
 		x1d, y1d, x2d, y2d, x3d, y3d, x4d, y4d := x1, y1, x2, y2, x3, y3, x4, y4
+		n := 0
+		var xy []float32
 		for {
-			x1d, y1d = x4d, y4d+rp.ys*rp.vs*float32(rp.tile.sy)
+			x1d, y1d = x4d, y4d+rp.ys*rp.vs*((float32(rp.tile.yspacing)+float32(rp.size[1]))/rp.yas-float32(rp.size[1]))
 			x2d, y2d = x3d, y1d
 			x3d = x4d - rp.rxadd*rp.ys*float32(rp.size[1]) + (rp.xts/rp.xbs)*(x3d-x4d)
 			y3d = y2d + rp.ys*rp.vs*float32(rp.size[1])
@@ -192,24 +212,34 @@ func rmTileSub(modelview mgl.Mat4, rp RenderParams) {
 				break
 			}
 			y4d = y3d
-			if rp.ys*(float32(rp.size[1])+float32(rp.tile.sy)) < 0 {
+			if rp.ys*((float32(rp.tile.yspacing)+float32(rp.size[1]))/rp.yas) < 0 {
 				if y1d <= float32(-sys.scrrect[3]) && y4d <= float32(-sys.scrrect[3]) {
 					break
 				}
 			} else if y1d >= 0 && y4d >= 0 {
 				break
 			}
+			n += 1
+			xy = append(xy, x1d, x2d, x3d, x4d, y1d, y2d, y3d, y4d)
+		}
+		for {
+			if len(xy) == 0 {
+				break
+			}
+			x1d, x2d, x3d, x4d, y1d, y2d, y3d, y4d, xy = xy[len(xy)-8], xy[len(xy)-7], xy[len(xy)-6], xy[len(xy)-5], xy[len(xy)-4], xy[len(xy)-3], xy[len(xy)-2], xy[len(xy)-1], xy[:len(xy)-8]
 			if (0 > y1d || 0 > y4d) &&
 				(y1d > float32(-sys.scrrect[3]) || y4d > float32(-sys.scrrect[3])) {
-				rmTileHSub(modelview, x1d, y1d, x2d, y2d, x3d, y3d, x4d, y4d,
-					float32(rp.size[0]), rp.tile, rp.rcx)
+				rmTileHSub(modelview, x1d, y1d, x2d, y2d, x3d, y3d, x4d, y4d, y1d-y1, float32(rp.size[0]), rp)
 			}
 		}
 	}
-	if rp.tile.y == 0 || rp.xts != 0 {
-		n := rp.tile.y
+	if rp.tile.yflag == 0 || rp.xts != 0 {
+		x1 += rp.rxadd * rp.ys * float32(rp.size[1])
+		x2 = x1 + rp.xbs*float32(rp.size[0])
+		n := rp.tile.yflag
+		oy := y1
 		for {
-			if rp.ys*(float32(rp.size[1])+float32(rp.tile.sy)) > 0 {
+			if rp.ys*((float32(rp.tile.yspacing)+float32(rp.size[1]))/rp.yas) > 0 {
 				if y1 <= float32(-sys.scrrect[3]) && y4 <= float32(-sys.scrrect[3]) {
 					break
 				}
@@ -218,16 +248,16 @@ func rmTileSub(modelview mgl.Mat4, rp RenderParams) {
 			}
 			if (0 > y1 || 0 > y4) &&
 				(y1 > float32(-sys.scrrect[3]) || y4 > float32(-sys.scrrect[3])) {
-				rmTileHSub(modelview, x1, y1, x2, y2, x3, y3, x4, y4,
-					float32(rp.size[0]), rp.tile, rp.rcx)
+				rmTileHSub(modelview, x1, y1, x2, y2, x3, y3, x4, y4, y1-oy,
+					float32(rp.size[0]), rp)
 			}
-			if rp.tile.y != 1 && n != 0 {
+			if rp.tile.yflag != 1 && n != 0 {
 				n--
 			}
 			if n == 0 {
 				break
 			}
-			x4, y4 = x1, y1-rp.ys*rp.vs*float32(rp.tile.sy)
+			x4, y4 = x1, y1-rp.ys*rp.vs*((float32(rp.tile.yspacing)+float32(rp.size[1]))/rp.yas-float32(rp.size[1]))
 			x3, y3 = x2, y4
 			x2 = x1 + rp.rxadd*rp.ys*float32(rp.size[1]) + (rp.xbs/rp.xts)*(x2-x1)
 			y2 = y3 - rp.ys*rp.vs*float32(rp.size[1])
@@ -247,15 +277,15 @@ func rmInitSub(rp *RenderParams) {
 		rp.rot.angle *= -1
 		rp.rot.xangle *= -1
 	}
-	if rp.tile.x == 0 {
-		rp.tile.sx = 0
-	} else if rp.tile.sx > 0 {
-		rp.tile.sx -= int32(rp.size[0])
+	if rp.tile.xflag == 0 {
+		rp.tile.xspacing = 0
+	} else if rp.tile.xspacing > 0 {
+		rp.tile.xspacing -= int32(rp.size[0])
 	}
-	if rp.tile.y == 0 {
-		rp.tile.sy = 0
-	} else if rp.tile.sy > 0 {
-		rp.tile.sy -= int32(rp.size[1])
+	if rp.tile.yflag == 0 {
+		rp.tile.yspacing = 0
+	} else if rp.tile.yspacing > 0 {
+		rp.tile.yspacing -= int32(rp.size[1])
 	}
 	if rp.xts >= 0 {
 		rp.x *= -1
@@ -268,6 +298,9 @@ func rmInitSub(rp *RenderParams) {
 	rp.y += rp.rcy
 }
 
+func BlendReset() {
+	gfx.BlendReset()
+}
 func RenderSprite(rp RenderParams) {
 	if !rp.IsValid() {
 		return
@@ -322,7 +355,6 @@ func RenderSprite(rp RenderParams) {
 
 		gfx.ReleasePipeline()
 	}, rp.trans, rp.paltex != nil, invblend, &neg, &padd, &pmul, rp.paltex == nil)
-
 	gfx.DisableScissor()
 }
 
@@ -338,7 +370,7 @@ func renderWithBlending(render func(eq BlendEquation, src, dst BlendFunc, a floa
 		BlendI = BlendAdd
 	}
 	switch {
-	//Add blend mode(255,255)
+	// Add blend mode(255,255)
 	case trans == -1:
 		if invblend >= 1 && acolor != nil {
 			(*acolor)[0], (*acolor)[1], (*acolor)[2] = -acolor[0], -acolor[1], -acolor[2]
@@ -347,7 +379,7 @@ func renderWithBlending(render func(eq BlendEquation, src, dst BlendFunc, a floa
 			*neg = false
 		}
 		render(Blend, blendSourceFactor, BlendOne, 1)
-	//Sub blend mode
+	// Sub blend mode
 	case trans == -2:
 		if invblend >= 1 && acolor != nil {
 			(*acolor)[0], (*acolor)[1], (*acolor)[2] = -acolor[0], -acolor[1], -acolor[2]
@@ -355,14 +387,14 @@ func renderWithBlending(render func(eq BlendEquation, src, dst BlendFunc, a floa
 		if invblend == 3 && neg != nil {
 			*neg = false
 		}
-		render(BlendI, BlendOne, BlendOne, 1)
+		render(BlendI, blendSourceFactor, BlendOne, 1)
 	case trans <= 0:
-	//Add1(128,128)
+	// Add1(128,128)
 	case trans < 255:
 		Blend = BlendAdd
 		if !isrgba && (invblend >= 2 || invblend <= -1) && acolor != nil && mcolor != nil {
 			src, dst := trans&0xff, trans>>10&0xff
-			//Summ of add components
+			// Summ of add components
 			gc := AbsF(acolor[0]) + AbsF(acolor[1]) + AbsF(acolor[2])
 			v3, al := MaxF((gc*255)-float32(dst+src), 512)/128, (float32(src+dst) / 255)
 			rM, gM, bM := mcolor[0]*al, mcolor[1]*al, mcolor[2]*al
@@ -372,10 +404,10 @@ func renderWithBlending(render func(eq BlendEquation, src, dst BlendFunc, a floa
 		} else {
 			render(Blend, blendSourceFactor, BlendOneMinusSrcAlpha, float32(trans)/255)
 		}
-	//None
+	// None
 	case trans < 512:
 		render(BlendAdd, blendSourceFactor, BlendOneMinusSrcAlpha, 1)
-	//AddAlpha
+	// AddAlpha
 	default:
 		src, dst := trans&0xff, trans>>10&0xff
 		if dst < 255 {
@@ -396,8 +428,8 @@ func renderWithBlending(render func(eq BlendEquation, src, dst BlendFunc, a floa
 			} else {
 				Blend = BlendAdd
 			}
-			if (invblend >= 2 || invblend <= -1) && acolor != nil && mcolor != nil && src < 255 {
-				//Summ of add components
+			if !isrgba && (invblend >= 2 || invblend <= -1) && acolor != nil && mcolor != nil && src < 255 {
+				// Summ of add components
 				gc := AbsF(acolor[0]) + AbsF(acolor[1]) + AbsF(acolor[2])
 				v3, ml, al := MaxF((gc*255)-float32(dst+src), 512)/128, (float32(src) / 255), (float32(src+dst) / 255)
 				if isrgba {

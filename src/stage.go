@@ -1,11 +1,25 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+
+	_ "github.com/lukegb/dds"
+	"github.com/mdouchement/hdr"
+	_ "github.com/mdouchement/hdr/codec/rgbe"
+
+	mgl "github.com/go-gl/mathgl/mgl32"
+	"github.com/qmuntal/gltf"
+	"github.com/qmuntal/gltf/modeler"
+	"golang.org/x/mobile/exp/f32"
 )
 
 type StageProps struct {
@@ -18,46 +32,6 @@ func newStageProps() StageProps {
 	}
 
 	return sp
-}
-
-type EnvShake struct {
-	time  int32
-	freq  float32
-	ampl  float32
-	phase float32
-	mul   float32
-}
-
-func (es *EnvShake) clear() {
-	*es = EnvShake{freq: float32(math.Pi / 3), ampl: -4.0,
-		phase: float32(math.NaN()), mul: 1.0}
-}
-func (es *EnvShake) setDefPhase() {
-	if math.IsNaN(float64(es.phase)) {
-		if es.freq >= math.Pi/2 {
-			es.phase = math.Pi / 2
-		} else {
-			es.phase = 0
-		}
-	}
-}
-func (es *EnvShake) next() {
-	if es.time > 0 {
-		es.time--
-		es.phase += es.freq
-		if es.phase > math.Pi*2 {
-			es.ampl *= es.mul
-			es.phase -= math.Pi * 2
-		}
-	} else {
-		es.ampl = 0
-	}
-}
-func (es *EnvShake) getOffset() float32 {
-	if es.time > 0 {
-		return es.ampl * float32(math.Sin(float64(es.phase)))
-	}
-	return 0
 }
 
 type BgcType int32
@@ -114,7 +88,6 @@ type backGround struct {
 	id                 int32
 	start              [2]float32
 	xofs               float32
-	camstartx          float32
 	delta              [2]float32
 	width              [2]int32
 	xscale             [2]float32
@@ -129,7 +102,7 @@ type backGround struct {
 	visible            bool
 	active             bool
 	positionlink       bool
-	toplayer           bool
+	layerno            int32
 	autoresizeparallax bool
 	notmaskwindow      int32
 	startrect          [4]int32
@@ -149,9 +122,8 @@ func newBackGround(sff *Sff) *backGround {
 		startrect: [...]int32{-32768, -32768, 65535, 65535}}
 }
 func readBackGround(is IniSection, link *backGround,
-	sff *Sff, at AnimationTable, camstartx float32, sProps StageProps) *backGround {
+	sff *Sff, at AnimationTable, sProps StageProps) *backGround {
 	bg := newBackGround(sff)
-	bg.camstartx = camstartx
 	typ := is["type"]
 	if len(typ) == 0 {
 		return bg
@@ -169,12 +141,7 @@ func readBackGround(is IniSection, link *backGround,
 		return bg
 	}
 	var tmp int32
-	if is.ReadI32("layerno", &tmp) {
-		bg.toplayer = tmp == 1
-		if tmp < 0 || tmp > 1 {
-			bg.typ = 3
-		}
-	}
+	is.ReadI32("layerno", &bg.layerno)
 	if bg.typ != 3 {
 		var hasAnim bool
 		if (bg.typ != 0 || len(is["spriteno"]) == 0) &&
@@ -263,12 +230,12 @@ func readBackGround(is IniSection, link *backGround,
 		bg.anim.srcAlpha = -1
 		bg.anim.dstAlpha = 0
 	}
-	if is.readI32ForStage("tile", &bg.anim.tile.x, &bg.anim.tile.y) {
+	if is.readI32ForStage("tile", &bg.anim.tile.xflag, &bg.anim.tile.yflag) {
 		if bg.typ == 2 {
-			bg.anim.tile.y = 0
+			bg.anim.tile.yflag = 0
 		}
-		if bg.anim.tile.x < 0 {
-			bg.anim.tile.x = math.MaxInt32
+		if bg.anim.tile.xflag < 0 {
+			bg.anim.tile.xflag = math.MaxInt32
 		}
 	}
 	if bg.typ == 2 {
@@ -278,20 +245,20 @@ func readBackGround(is IniSection, link *backGround,
 		is.ReadF32("yscalestart", &bg.yscalestart)
 		is.ReadF32("yscaledelta", &bg.yscaledelta)
 	} else {
-		is.ReadI32("tilespacing", &bg.anim.tile.sx, &bg.anim.tile.sy)
-		//bg.anim.tile.sy = bg.anim.tile.sx
+		is.ReadI32("tilespacing", &bg.anim.tile.xspacing, &bg.anim.tile.yspacing)
+		//bg.anim.tile.yspacing = bg.anim.tile.xspacing
 		if bg.actionno < 0 && len(bg.anim.frames) > 0 {
 			if spr := sff.GetSprite(
 				bg.anim.frames[0].Group, bg.anim.frames[0].Number); spr != nil {
-				bg.anim.tile.sx += int32(spr.Size[0])
-				bg.anim.tile.sy += int32(spr.Size[1])
+				bg.anim.tile.xspacing += int32(spr.Size[0])
+				bg.anim.tile.yspacing += int32(spr.Size[1])
 			}
 		} else {
-			if bg.anim.tile.sx == 0 {
-				bg.anim.tile.x = 0
+			if bg.anim.tile.xspacing == 0 {
+				bg.anim.tile.xflag = 0
 			}
-			if bg.anim.tile.sy == 0 {
-				bg.anim.tile.y = 0
+			if bg.anim.tile.yspacing == 0 {
+				bg.anim.tile.yflag = 0
 			}
 		}
 	}
@@ -353,90 +320,133 @@ func (bg *backGround) reset() {
 	bg.palfx.time = -1
 	bg.palfx.invertblend = -3
 }
-func (bg backGround) draw(pos [2]float32, scl, bgscl, lclscl float32,
+
+func (bg backGround) draw(pos [2]float32, drawscl, bgscl, stglscl float32,
 	stgscl [2]float32, shakeY float32, isStage bool) {
+
+	// Handle parallax scaling (type = 2)
 	if bg.typ == 2 && (bg.width[0] != 0 || bg.width[1] != 0) && bg.anim.spr != nil {
 		bg.xscale[0] = float32(bg.width[0]) / float32(bg.anim.spr.Size[0])
 		bg.xscale[1] = float32(bg.width[1]) / float32(bg.anim.spr.Size[0])
 		bg.xofs = -float32(bg.width[0])/2 + float32(bg.anim.spr.Offset[0])*bg.xscale[0]
 	}
+
+	// Calculate raster x ratio and base x scale
 	xras := (bg.rasterx[1] - bg.rasterx[0]) / bg.rasterx[0]
 	xbs, dx := bg.xscale[1], MaxF(0, bg.delta[0]*bgscl)
+
+	// Initialize local scaling factors
 	var sclx_recip, sclx, scly float32 = 1, 1, 1
-	lscl := [...]float32{lclscl * stgscl[0], lclscl * stgscl[1]}
+	lscl := [...]float32{stglscl * stgscl[0], stglscl * stgscl[1]}
+
+	// Handle zoom scaling if zoomdelta is specified
 	if bg.zoomdelta[0] != math.MaxFloat32 {
-		sclx = scl + (1-scl)*(1-bg.zoomdelta[0])
-		scly = scl + (1-scl)*(1-bg.zoomdelta[1])
+		sclx = drawscl + (1-drawscl)*(1-bg.zoomdelta[0])
+		scly = drawscl + (1-drawscl)*(1-bg.zoomdelta[1])
 		if !bg.autoresizeparallax {
-			sclx_recip = (1 + bg.zoomdelta[0]*((1/(sclx*lscl[0])*lscl[0])-1))
+			sclx_recip = 1 + bg.zoomdelta[0]*((1/(sclx*lscl[0])*lscl[0])-1)
 		}
 	} else {
-		sclx = MaxF(0, scl+(1-scl)*(1-dx))
-		scly = MaxF(0, scl+(1-scl)*(1-MaxF(0, bg.delta[1]*bgscl)))
+		sclx = MaxF(0, drawscl+(1-drawscl)*(1-dx))
+		scly = MaxF(0, drawscl+(1-drawscl)*(1-MaxF(0, bg.delta[1]*bgscl)))
 	}
+
+	// Adjust x scale and x bottom zoom if autoresizeparallax is enabled
 	if sclx != 0 && bg.autoresizeparallax {
 		tmp := 1 / sclx
 		if bg.xbottomzoomdelta != math.MaxFloat32 {
-			xbs *= MaxF(0, scl+(1-scl)*(1-bg.xbottomzoomdelta*(xbs/bg.xscale[0]))) * tmp
+			xbs *= MaxF(0, drawscl+(1-drawscl)*(1-bg.xbottomzoomdelta*(xbs/bg.xscale[0]))) * tmp
 		} else {
-			xbs *= MaxF(0, scl+(1-scl)*(1-dx*(xbs/bg.xscale[0]))) * tmp
+			xbs *= MaxF(0, drawscl+(1-drawscl)*(1-dx*(xbs/bg.xscale[0]))) * tmp
 		}
-		tmp *= MaxF(0, scl+(1-scl)*(1-dx*(xras+1)))
+		tmp *= MaxF(0, drawscl+(1-drawscl)*(1-dx*(xras+1)))
 		xras -= tmp - 1
 		xbs *= tmp
 	}
+
+	// Adjust scaling based on zoomscaledelta if available
 	var xs3, ys3 float32 = 1, 1
 	if bg.zoomscaledelta[0] != math.MaxFloat32 {
-		xs3 = ((scl + (1-scl)*(1-bg.zoomscaledelta[0])) / sclx)
+		xs3 = (drawscl + (1-drawscl)*(1-bg.zoomscaledelta[0])) / sclx
 	}
 	if bg.zoomscaledelta[1] != math.MaxFloat32 {
-		ys3 = ((scl + (1-scl)*(1-bg.zoomscaledelta[1])) / scly)
+		ys3 = (drawscl + (1-drawscl)*(1-bg.zoomscaledelta[1])) / scly
 	}
-	scly *= lclscl
-	sclx *= lscl[0]
 	// This handles the flooring of the camera position in MUGEN versions earlier than 1.0.
+	var x, yScrollPos float32
 	if bg.roundpos {
+		x = bg.start[0] + bg.xofs - float32(Floor(pos[0]/stgscl[0]))*bg.delta[0] + bg.bga.offset[0]
+		yScrollPos = float32(Floor(pos[1]/drawscl/stgscl[1])) * bg.delta[1]
 		for i := 0; i < 2; i++ {
 			pos[i] = float32(math.Floor(float64(pos[i])))
 		}
+	} else {
+		x = bg.start[0] + bg.xofs - pos[0]/stgscl[0]*bg.delta[0] + bg.bga.offset[0]
+		// Hires breaks ydelta scrolling vel, so bgscl was commented from here.
+		yScrollPos = (pos[1] / drawscl / stgscl[1]) * bg.delta[1] // * bgscl
 	}
-	x := bg.start[0] + bg.xofs - (pos[0]/stgscl[0]+bg.camstartx)*bg.delta[0] +
-		bg.bga.offset[0]
-	zoomybound := sys.cam.CameraZoomYBound * float32(Btoi(isStage))
-	// Hires breaks ydelta scrolling vel, so bgscl was commented from here.
-	yScrollPos := ((pos[1] - (zoomybound / lclscl)) / stgscl[1]) * bg.delta[1] // * bgscl
-	yScrollPos += ((zoomybound / lclscl) / stgscl[1]) * Pow(bg.zoomdelta[1], 1.4) / bgscl
+
 	y := bg.start[1] - yScrollPos + bg.bga.offset[1]
-	ys2 := bg.scaledelta[1] * (pos[1] - zoomybound) * bg.delta[1] * bgscl
-	ys := ((100-(pos[1]-zoomybound)*bg.yscaledelta)*bgscl/bg.yscalestart)*bg.scalestart[1] + ys2
+
+	// Calculate Y scaling based on vertical scroll position and delta
+	ys2 := bg.scaledelta[1] * pos[1] * bg.delta[1] * bgscl
+	ys := ((100-(pos[1])*bg.yscaledelta)*bgscl/bg.yscalestart)*bg.scalestart[1] + ys2
 	xs := bg.scaledelta[0] * pos[0] * bg.delta[0] * bgscl
 	x *= bgscl
-	y = y*bgscl + ((float32(sys.gameHeight)-shakeY)/scly-240)/stgscl[1]
-	scly *= stgscl[1]
-	rect := bg.startrect
+
+	// Apply stage logic if BG is part of a stage
+	if isStage {
+		zoff := float32(sys.cam.zoffset) * stglscl
+		y = y*bgscl + ((zoff-shakeY)/scly-zoff)/stglscl/stgscl[1]
+		y -= sys.cam.aspectcorrection / (scly * stglscl * stgscl[1])
+		y -= sys.cam.zoomanchorcorrection / (scly * stglscl * stgscl[1])
+	} else {
+		y = y*bgscl + ((float32(sys.gameHeight)-shakeY)/stglscl/scly-240)/stgscl[1]
+	}
+
+	// Final scaling factors
+	sclx *= lscl[0]
+	scly *= stglscl * stgscl[1]
+
+	// Calculate window scale
 	var wscl [2]float32
 	for i := range wscl {
 		if bg.zoomdelta[i] != math.MaxFloat32 {
-			wscl[i] = MaxF(0, scl+(1-scl)*(1-MaxF(0, bg.zoomdelta[i]))) *
-				bgscl * lscl[i]
+			wscl[i] = MaxF(0, drawscl+(1-drawscl)*(1-MaxF(0, bg.zoomdelta[i]))) * bgscl * lscl[i]
 		} else {
-			wscl[i] = MaxF(0, scl+(1-scl)*(1-MaxF(0, bg.windowdelta[i]*bgscl))) *
-				bgscl * lscl[i]
+			wscl[i] = MaxF(0, drawscl+(1-drawscl)*(1-MaxF(0, bg.windowdelta[i]*bgscl))) * bgscl * lscl[i]
 		}
 	}
-	startrect0 := (float32(rect[0]) - (pos[0]+bg.camstartx)*bg.windowdelta[0] + (float32(sys.gameWidth)/2/sclx - float32(bg.notmaskwindow)*(float32(sys.gameWidth)/2)*(1/lscl[0]))) * sys.widthScale * wscl[0]
+
+	// Calculate window top left corner position
+	rect := bg.startrect
+
+	startrect0 := float32(rect[0]) - (pos[0])*bg.windowdelta[0] +
+		(float32(sys.gameWidth)/2/sclx - float32(bg.notmaskwindow)*(float32(sys.gameWidth)/2)*(1/lscl[0]))
+	startrect0 *= sys.widthScale * wscl[0]
 	if !isStage && wscl[0] == 1 {
+		// Screenpacks X coordinates start from left edge of screen
 		startrect0 += float32(sys.gameWidth-320) / 2 * sys.widthScale
 	}
-	startrect1 := ((float32(rect[1])-pos[1]*bg.windowdelta[1]+(float32(sys.gameHeight)/scly-240))*wscl[1] - shakeY) * sys.heightScale
+
+	// TODO: Zoom doesn't work correctly here. Especially in different localcoords
+	startrect1 := float32(rect[1]) - pos[1]*bg.windowdelta[1] + (float32(sys.gameHeight) - 240*scly)
+	startrect1 *= sys.heightScale * wscl[1]
+	startrect1 -= shakeY
+
+	// Determine final window
 	rect[0] = int32(math.Floor(float64(startrect0)))
 	rect[1] = int32(math.Floor(float64(startrect1)))
 	rect[2] = int32(math.Floor(float64(startrect0 + (float32(rect[2]) * sys.widthScale * wscl[0]) - float32(rect[0]))))
 	rect[3] = int32(math.Floor(float64(startrect1 + (float32(rect[3]) * sys.heightScale * wscl[1]) - float32(rect[1]))))
+
+	// Render background if it's within the screen area
 	if rect[0] < sys.scrrect[2] && rect[1] < sys.scrrect[3] && rect[0]+rect[2] > 0 && rect[1]+rect[3] > 0 {
-		bg.anim.Draw(&rect, x, y, sclx, scly, bg.xscale[0]*bgscl*(bg.scalestart[0]+xs)*xs3, xbs*bgscl*(bg.scalestart[0]+xs)*xs3, ys*ys3,
-			xras*x/(AbsF(ys*ys3)*lscl[1]*float32(bg.anim.spr.Size[1])*bg.scalestart[1])*sclx_recip*bg.scalestart[1],
-			Rotation{}, float32(sys.gameWidth)/2, bg.palfx, true, 1, false, 1, 0, 0)
+		bg.anim.Draw(&rect, x, y, sclx, scly,
+			bg.xscale[0]*bgscl*(bg.scalestart[0]+xs)*xs3,
+			xbs*bgscl*(bg.scalestart[0]+xs)*xs3,
+			ys*ys3, xras*x/(AbsF(ys*ys3)*lscl[1]*float32(bg.anim.spr.Size[1])*bg.scalestart[1])*sclx_recip*bg.scalestart[1],
+			Rotation{}, float32(sys.gameWidth)/2, bg.palfx, true, 1, false, [2]float32{1, 1}, 0, 0, 0)
 	}
 }
 
@@ -667,70 +677,95 @@ type stageShadow struct {
 	fadeend   int32
 	fadebgn   int32
 	xshear    float32
+	offset    [2]float32
 }
 type stagePlayer struct {
-	startx, starty, startz int32
+	startx, starty, startz, facing int32
 }
 type Stage struct {
-	def             string
-	bgmusic         string
-	name            string
-	displayname     string
-	author          string
-	nameLow         string
-	displaynameLow  string
-	authorLow       string
-	attachedchardef []string
-	sff             *Sff
-	at              AnimationTable
-	bg              []*backGround
-	bgc             []bgCtrl
-	bgct            bgcTimeLine
-	bga             bgAction
-	sdw             stageShadow
-	p               [2]stagePlayer
-	leftbound       float32
-	rightbound      float32
-	screenleft      int32
-	screenright     int32
-	zoffsetlink     int32
-	reflection      int32
-	hires           bool
-	resetbg         bool
-	debugbg         bool
-	bgclearcolor    [3]int32
-	localscl        float32
-	scale           [2]float32
-	bgmvolume       int32
-	bgmloopstart    int32
-	bgmloopend      int32
-	bgmratiolife    int32
-	bgmtriggerlife  int32
-	bgmtriggeralt   int32
-	mainstage       bool
-	stageCamera     stageCamera
-	stageTime       int32
-	constants       map[string]float32
-	p1p3dist        float32
-	ver             [2]uint16
-	reload          bool
-	stageprops      StageProps
+	def               string
+	bgmusic           string
+	name              string
+	displayname       string
+	author            string
+	nameLow           string
+	displaynameLow    string
+	authorLow         string
+	attachedchardef   []string
+	sff               *Sff
+	at                AnimationTable
+	bg                []*backGround
+	bgc               []bgCtrl
+	bgct              bgcTimeLine
+	bga               bgAction
+	sdw               stageShadow
+	p                 [8]stagePlayer
+	leftbound         float32
+	rightbound        float32
+	screenleft        int32
+	screenright       int32
+	zoffsetlink       int32
+	reflection        stageShadow
+	reflectionlayerno int32
+	hires             bool
+	autoturn          bool
+	resetbg           bool
+	debugbg           bool
+	bgclearcolor      [3]int32
+	localscl          float32
+	scale             [2]float32
+	bgmvolume         int32
+	bgmloopstart      int32
+	bgmloopend        int32
+	bgmstartposition  int32
+	bgmfreqmul        float32
+	bgmratiolife      int32
+	bgmtriggerlife    int32
+	bgmtriggeralt     int32
+	mainstage         bool
+	stageCamera       stageCamera
+	stageTime         int32
+	constants         map[string]float32
+	partnerspacing    int32
+	mugenver          [2]uint16
+	reload            bool
+	stageprops        StageProps
+	model             *Model
+	ikemenver         [3]uint16
+	topbound          float32
+	botbound          float32
 }
 
 func newStage(def string) *Stage {
-	s := &Stage{def: def, leftbound: -1000,
-		rightbound: 1000, screenleft: 15, screenright: 15,
-		zoffsetlink: -1, resetbg: true, localscl: 1, scale: [...]float32{float32(math.NaN()), float32(math.NaN())},
-		bgmratiolife: 30, stageCamera: *newStageCamera(),
-		constants: make(map[string]float32), p1p3dist: 25, bgmvolume: 100}
+	s := &Stage{
+		def:            def,
+		leftbound:      -1000,
+		rightbound:     1000,
+		screenleft:     15,
+		screenright:    15,
+		zoffsetlink:    -1,
+		autoturn:       true,
+		resetbg:        true,
+		localscl:       1,
+		scale:          [...]float32{float32(math.NaN()), float32(math.NaN())},
+		bgmratiolife:   30,
+		stageCamera:    *newStageCamera(),
+		constants:      make(map[string]float32),
+		partnerspacing: 25,
+		bgmvolume:      100,
+		bgmfreqmul:     1, // Fallback value to allow music to play on legacy stages without a bgmfreqmul parameter
+	}
 	s.sdw.intensity = 128
 	s.sdw.color = 0x808080
+	s.reflection.color = 0xFFFFFF
 	s.sdw.yscale = 0.4
-	s.p[0].startx, s.p[1].startx = -70, 70
+	s.p[0].startx = -70
+	s.p[1].startx = 70
 	s.stageprops = newStageProps()
 	return s
 }
-func loadStage(def string, main bool) (*Stage, error) {
+
+func loadStage(def string, maindef bool) (*Stage, error) {
 	s := newStage(def)
 	str, err := LoadText(def)
 	if err != nil {
@@ -751,7 +786,20 @@ func loadStage(def string, main bool) (*Stage, error) {
 			defmap[name] = append(defmap[name], is)
 		}
 	}
-	if sec := defmap["info"]; len(sec) > 0 {
+
+	var sec []IniSection
+	sectionExists := false
+
+	// Info group
+	if sec = defmap[fmt.Sprintf("%v.info", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["info"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
 		var ok bool
 		s.name, ok, _ = sec[0].getText("name")
 		if !ok {
@@ -778,8 +826,21 @@ func loadStage(def string, main bool) (*Stage, error) {
 				}
 			}
 		}
-		// If the MUGEN version is lower than 1.0, use camera pixel rounding (floor)
-		if s.ver[0] == 0 {
+		s.ikemenver = [3]uint16{}
+		if str, ok := sec[0]["ikemenversion"]; ok {
+			for k, v := range SplitAndTrim(str, ".") {
+				if k >= len(s.ikemenver) {
+					break
+				}
+				if v, err := strconv.ParseUint(v, 10, 16); err == nil {
+					s.ikemenver[k] = uint16(v)
+				} else {
+					break
+				}
+			}
+		}
+		// If the MUGEN version is lower than 1.0, default to camera pixel rounding (floor)
+		if s.ikemenver[0] == 0 && s.ikemenver[1] == 0 && s.mugenver[0] != 1 {
 			s.stageprops.roundpos = true
 		}
 		if sec[0].LoadFile("attachedchar", []string{def, "", sys.motifDir, "data/"}, func(filename string) error {
@@ -788,7 +849,8 @@ func loadStage(def string, main bool) (*Stage, error) {
 		}); err != nil {
 			return nil, err
 		}
-		if main {
+		// RoundXdef
+		if maindef {
 			r, _ := regexp.Compile("^round[0-9]+def$")
 			for k, v := range sec[0] {
 				if r.MatchString(k) {
@@ -809,35 +871,21 @@ func loadStage(def string, main bool) (*Stage, error) {
 			sec[0].ReadBool("roundloop", &sys.stageLoop)
 		}
 	}
-	if sec := defmap["constants"]; len(sec) > 0 {
-		for key, value := range sec[0] {
-			s.constants[key] = float32(Atof(value))
+
+	// StageInfo group. Needs to be read before most other groups so that localcoord is known
+	if sec = defmap[fmt.Sprintf("%v.stageinfo", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["stageinfo"]; len(sec) > 0 {
+			sectionExists = true
 		}
 	}
-	if sec := defmap["playerinfo"]; len(sec) > 0 {
-		sec[0].ReadI32("p1startx", &s.p[0].startx)
-		sec[0].ReadI32("p1starty", &s.p[0].starty)
-		sec[0].ReadI32("p1startz", &s.p[0].startz)
-		sec[0].ReadI32("p2startx", &s.p[1].startx)
-		sec[0].ReadI32("p2starty", &s.p[1].starty)
-		sec[0].ReadI32("p2startz", &s.p[1].startz)
-		sec[0].ReadF32("leftbound", &s.leftbound)
-		sec[0].ReadF32("rightbound", &s.rightbound)
-		sec[0].ReadF32("p1p3dist", &s.p1p3dist)
-	}
-	if sec := defmap["scaling"]; len(sec) > 0 {
-		if s.ver[0] == 0 { //mugen 1.0+ removed support for topscale
-			sec[0].ReadF32("topscale", &s.stageCamera.ztopscale)
-		}
-	}
-	if sec := defmap["bound"]; len(sec) > 0 {
-		sec[0].ReadI32("screenleft", &s.screenleft)
-		sec[0].ReadI32("screenright", &s.screenright)
-	}
-	if sec := defmap["stageinfo"]; len(sec) > 0 {
+	if sectionExists {
+		sectionExists = false
 		sec[0].ReadI32("zoffset", &s.stageCamera.zoffset)
 		sec[0].ReadI32("zoffsetlink", &s.zoffsetlink)
 		sec[0].ReadBool("hires", &s.hires)
+		sec[0].ReadBool("autoturn", &s.autoturn)
 		sec[0].ReadBool("resetbg", &s.resetbg)
 		sec[0].readI32ForStage("localcoord", &s.stageCamera.localcoord[0],
 			&s.stageCamera.localcoord[1])
@@ -856,9 +904,103 @@ func loadStage(def string, main bool) (*Stage, error) {
 	}
 	s.localscl = float32(sys.gameWidth) / float32(s.stageCamera.localcoord[0])
 	s.stageCamera.localscl = s.localscl
+	if s.stageCamera.localcoord[0] != 320 {
+		// Update default values to new localcoord. Like characters do
+		coordRatio := float32(s.stageCamera.localcoord[0]) / 320
+		s.leftbound *= coordRatio
+		s.rightbound *= coordRatio
+		s.screenleft = int32(float32(s.screenleft) * coordRatio)
+		s.screenright = int32(float32(s.screenright) * coordRatio)
+		s.partnerspacing = int32(float32(s.partnerspacing) * coordRatio)
+		s.p[0].startx = int32(float32(s.p[0].startx) * coordRatio)
+		s.p[1].startx = int32(float32(s.p[1].startx) * coordRatio)
+	}
+
+	// Constants group
+	if sec = defmap[fmt.Sprintf("%v.constants", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["constants"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
+		for key, value := range sec[0] {
+			s.constants[key] = float32(Atof(value))
+		}
+	}
+
+	// Scaling group
+	if sec = defmap[fmt.Sprintf("%v.scaling", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["scaling"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
+		if s.mugenver[0] != 1 || s.ikemenver[0] >= 1 { // mugen 1.0+ removed support for z-axis, IKEMEN-Go 1.0 adds it back
+			sec[0].ReadF32("topz", &s.stageCamera.topz)
+			sec[0].ReadF32("botz", &s.stageCamera.botz)
+			sec[0].ReadF32("topscale", &s.stageCamera.ztopscale)
+			sec[0].ReadF32("botscale", &s.stageCamera.zbotscale)
+		}
+	}
+
+	// Bound group
+	if sec = defmap[fmt.Sprintf("%v.bound", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["bound"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
+		sec[0].ReadI32("screenleft", &s.screenleft)
+		sec[0].ReadI32("screenright", &s.screenright)
+	}
+
+	// PlayerInfo Group
+	if sec = defmap[fmt.Sprintf("%v.playerinfo", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["playerinfo"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
+		sec[0].ReadI32("partnerspacing", &s.partnerspacing)
+		for i := range s.p {
+			// Defaults
+			if i >= 2 {
+				s.p[i].startx = s.p[i-2].startx + s.partnerspacing*int32(2*(i%2)-1) // Previous partner + partnerspacing
+				s.p[i].starty = s.p[i%2].starty                                     // Same as players 1 or 2
+				s.p[i].startz = s.p[i%2].startz                                     // Same as players 1 or 2
+				s.p[i].facing = int32(1 - 2*(i%2))                                  // By team side
+			}
+			// pXstartx
+			sec[0].ReadI32(fmt.Sprintf("p%dstartx", i+1), &s.p[i].startx)
+			// pXstarty
+			sec[0].ReadI32(fmt.Sprintf("p%dstarty", i+1), &s.p[i].starty)
+			// pXstartz
+			sec[0].ReadI32(fmt.Sprintf("p%dstartz", i+1), &s.p[i].startz)
+			// pXfacing
+			sec[0].ReadI32(fmt.Sprintf("p%dfacing", i+1), &s.p[i].facing)
+		}
+		sec[0].ReadF32("leftbound", &s.leftbound)
+		sec[0].ReadF32("rightbound", &s.rightbound)
+		sec[0].ReadF32("topbound", &s.topbound)
+		sec[0].ReadF32("botbound", &s.botbound)
+	}
+
+	// Camera group
 	if sec := defmap["camera"]; len(sec) > 0 {
 		sec[0].ReadI32("startx", &s.stageCamera.startx)
-		//sec[0].ReadI32("starty", &s.stageCamera.starty) //does nothing in mugen
+		sec[0].ReadI32("starty", &s.stageCamera.starty)
 		sec[0].ReadI32("boundleft", &s.stageCamera.boundleft)
 		sec[0].ReadI32("boundright", &s.stageCamera.boundright)
 		sec[0].ReadI32("boundhigh", &s.stageCamera.boundhigh)
@@ -867,11 +1009,23 @@ func loadStage(def string, main bool) (*Stage, error) {
 		sec[0].ReadI32("floortension", &s.stageCamera.floortension)
 		sec[0].ReadI32("tension", &s.stageCamera.tension)
 		sec[0].ReadF32("tensionvel", &s.stageCamera.tensionvel)
-		sec[0].ReadI32("overdrawhigh", &s.stageCamera.overdrawhigh) //TODO: not implemented
+		sec[0].ReadI32("overdrawhigh", &s.stageCamera.overdrawhigh) // TODO: not implemented
 		sec[0].ReadI32("overdrawlow", &s.stageCamera.overdrawlow)
 		sec[0].ReadI32("cuthigh", &s.stageCamera.cuthigh) //TODO: not implemented
 		sec[0].ReadI32("cutlow", &s.stageCamera.cutlow)
 		sec[0].ReadF32("startzoom", &s.stageCamera.startzoom)
+		sec[0].ReadF32("fov", &s.stageCamera.fov)
+		sec[0].ReadF32("yshift", &s.stageCamera.yshift)
+		sec[0].ReadF32("near", &s.stageCamera.near)
+		sec[0].ReadF32("far", &s.stageCamera.far)
+		sec[0].ReadBool("autocenter", &s.stageCamera.autocenter)
+		sec[0].ReadF32("zoomindelay", &s.stageCamera.zoomindelay)
+		sec[0].ReadF32("zoominspeed", &s.stageCamera.zoominspeed)
+		sec[0].ReadF32("zoomoutspeed", &s.stageCamera.zoomoutspeed)
+		sec[0].ReadF32("yscrollspeed", &s.stageCamera.yscrollspeed)
+		sec[0].ReadF32("boundhighzoomdelta", &s.stageCamera.boundhighzoomdelta)
+		sec[0].ReadF32("verticalfollowzoomdelta", &s.stageCamera.verticalfollowzoomdelta)
+		sec[0].ReadBool("lowestcap", &s.stageCamera.lowestcap)
 		if sys.cam.ZoomMax == 0 {
 			sec[0].ReadF32("zoomin", &s.stageCamera.zoomin)
 		} else {
@@ -891,22 +1045,68 @@ func loadStage(def string, main bool) (*Stage, error) {
 			sec[0].ReadI32("tensionhigh", &s.stageCamera.tensionhigh)
 		}
 	}
-	if sec := defmap["music"]; len(sec) > 0 {
+
+	// Music group
+	if sec = defmap[fmt.Sprintf("%v.music", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["music"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
 		s.bgmusic = sec[0]["bgmusic"]
 		sec[0].ReadI32("bgmvolume", &s.bgmvolume)
 		sec[0].ReadI32("bgmloopstart", &s.bgmloopstart)
 		sec[0].ReadI32("bgmloopend", &s.bgmloopend)
+		sec[0].ReadI32("bgmstartposition", &s.bgmstartposition)
+		sec[0].ReadF32("bgmfreqmul", &s.bgmfreqmul)
 		sec[0].ReadI32("bgmratio.life", &s.bgmratiolife)
 		sec[0].ReadI32("bgmtrigger.life", &s.bgmtriggerlife)
 		sec[0].ReadI32("bgmtrigger.alt", &s.bgmtriggeralt)
 	}
-	if sec := defmap["bgdef"]; len(sec) > 0 {
+
+	// BGDef group
+	if sec = defmap[fmt.Sprintf("%v.bgdef", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["bgdef"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
 		if sec[0].LoadFile("spr", []string{def, "", sys.motifDir, "data/"}, func(filename string) error {
 			sff, err := loadSff(filename, false)
 			if err != nil {
 				return err
 			}
 			*s.sff = *sff
+			// SFF v2.01 was not available before Mugen 1.1, therefore we assume that's the minimum correct version for the stage
+			if s.sff.header.Ver0 == 2 && s.sff.header.Ver2 == 1 {
+				s.mugenver[0] = 1
+				s.mugenver[1] = 1
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		if err = sec[0].LoadFile("model", []string{def, "", sys.motifDir, "data/"}, func(filename string) error {
+			model, err := loadglTFStage(filename)
+			if err != nil {
+				return err
+			}
+			s.model = &Model{}
+			*s.model = *model
+			s.model.pfx = newPalFX()
+			s.model.pfx.clear()
+			s.model.pfx.time = -1
+			// 3D models were not available before Ikemen 1.0, therefore we assume that's the minimum correct version for the stage
+			if s.ikemenver[0] == 0 && s.ikemenver[1] == 0 {
+				s.ikemenver[0] = 1
+				s.ikemenver[1] = 0
+			}
 			return nil
 		}); err != nil {
 			return nil, err
@@ -915,38 +1115,134 @@ func loadStage(def string, main bool) (*Stage, error) {
 		sec[0].readI32ForStage("bgclearcolor", &s.bgclearcolor[0], &s.bgclearcolor[1], &s.bgclearcolor[2])
 		sec[0].ReadBool("roundpos", &s.stageprops.roundpos)
 	}
-	reflect := true
-	if sec := defmap["shadow"]; len(sec) > 0 {
+
+	// Model group
+	if sec = defmap[fmt.Sprintf("%v.model", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["model"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
+		if str, ok := sec[0]["offset"]; ok {
+			for k, v := range SplitAndTrim(str, ",") {
+				if k >= len(s.model.offset) {
+					break
+				}
+				if v, err := strconv.ParseFloat(v, 32); err == nil {
+					s.model.offset[k] = float32(v)
+				} else {
+					break
+				}
+			}
+		}
+		posMul := float32(math.Tan(float64(s.stageCamera.fov*math.Pi/180)/2)) * -s.model.offset[2] / (float32(s.stageCamera.localcoord[1]) / 2)
+		s.stageCamera.zoffset = int32(float32(s.stageCamera.localcoord[1])/2 - s.model.offset[1]/posMul - s.stageCamera.yshift*float32(sys.scrrect[3]/2)/float32(sys.gameHeight)*float32(s.stageCamera.localcoord[1])/sys.heightScale)
+		if str, ok := sec[0]["scale"]; ok {
+			for k, v := range SplitAndTrim(str, ",") {
+				if k >= len(s.model.scale) {
+					break
+				}
+				if v, err := strconv.ParseFloat(v, 32); err == nil {
+					s.model.scale[k] = float32(v)
+				} else {
+					break
+				}
+			}
+		}
+		if err = sec[0].LoadFile("environment", []string{def, "", sys.motifDir, "data/"}, func(filename string) error {
+			env, err := loadEnvironment(filename)
+			if err != nil {
+				return err
+			}
+			var intensity float32
+			if sec[0].ReadF32("environmentintensity", &intensity) {
+				env.environmentIntensity = intensity
+			}
+			s.model.environment = env
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	// Shadow group
+	if sec = defmap[fmt.Sprintf("%v.shadow", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["shadow"]; len(sec) > 0 {
+			sectionExists = true
+		}
+	}
+	if sectionExists {
+		sectionExists = false
 		var tmp int32
 		if sec[0].ReadI32("intensity", &tmp) {
 			s.sdw.intensity = Clamp(tmp, 0, 255)
 		}
 		var r, g, b int32
-		// mugen 1.1 removed support for color
-		if (s.ver[0] != 1 || s.ver[1] != 1) && (s.sff.header.Ver0 != 2 || s.sff.header.Ver2 != 1) && sec[0].readI32ForStage("color", &r, &g, &b) {
-			r, g, b = Clamp(r, 0, 255), Clamp(g, 0, 255), Clamp(b, 0, 255)
+		sec[0].readI32ForStage("color", &r, &g, &b)
+		r, g, b = Clamp(r, 0, 255), Clamp(g, 0, 255), Clamp(b, 0, 255)
+		// Disable color parameter specifically in Mugen 1.1 stages
+		if s.ikemenver[0] == 0 && s.ikemenver[1] == 0 && s.mugenver[0] == 1 && s.mugenver[1] == 1 {
+			r, g, b = 0, 0, 0
 		}
 		s.sdw.color = uint32(r<<16 | g<<8 | b)
 		sec[0].ReadF32("yscale", &s.sdw.yscale)
-		sec[0].ReadBool("reflect", &reflect)
 		sec[0].readI32ForStage("fade.range", &s.sdw.fadeend, &s.sdw.fadebgn)
 		sec[0].ReadF32("xshear", &s.sdw.xshear)
+		sec[0].readF32ForStage("offset", &s.sdw.offset[0], &s.sdw.offset[1])
 	}
-	if reflect {
-		if sec := defmap["reflection"]; len(sec) > 0 {
-			var tmp int32
-			if sec[0].ReadI32("intensity", &tmp) {
-				s.reflection = Clamp(tmp, 0, 255)
-			}
+
+	// Reflection group
+	if sec = defmap[fmt.Sprintf("%v.reflection", sys.language)]; len(sec) > 0 {
+		sectionExists = true
+	} else {
+		if sec = defmap["reflection"]; len(sec) > 0 {
+			sectionExists = true
 		}
 	}
+	if sectionExists {
+		sectionExists = false
+		s.reflection.yscale = 1.0
+		s.reflection.xshear = 0
+		s.reflection.color = 0xFFFFFF
+		var tmp int32
+		var tmp2 float32
+		var tmp3 [2]float32
+		//sec[0].ReadBool("reflect", &reflect) // This parameter is documented in Mugen but doesn't do anything
+		if sec[0].ReadI32("intensity", &tmp) {
+			s.reflection.intensity = Clamp(tmp, 0, 255)
+		}
+		var r, g, b int32 = 0, 0, 0
+		sec[0].readI32ForStage("color", &r, &g, &b)
+		r, g, b = Clamp(r, 0, 255), Clamp(g, 0, 255), Clamp(b, 0, 255)
+		s.reflection.color = uint32(r<<16 | g<<8 | b)
+		if sec[0].ReadI32("layerno", &tmp) {
+			s.reflectionlayerno = Clamp(tmp, -1, 0)
+		}
+		if sec[0].ReadF32("yscale", &tmp2) {
+			s.reflection.yscale = tmp2
+		}
+		if sec[0].ReadF32("xshear", &tmp2) {
+			s.reflection.xshear = tmp2
+		}
+		if sec[0].readF32ForStage("offset", &tmp3[0], &tmp3[1]) {
+			s.reflection.offset[0] = tmp3[0]
+			s.reflection.offset[1] = tmp3[1]
+		}
+	}
+
+	// BG group
 	var bglink *backGround
 	for _, bgsec := range defmap["bg"] {
 		if len(s.bg) > 0 && !s.bg[len(s.bg)-1].positionlink {
 			bglink = s.bg[len(s.bg)-1]
 		}
 		s.bg = append(s.bg, readBackGround(bgsec, bglink,
-			s.sff, s.at, float32(s.stageCamera.startx), s.stageprops))
+			s.sff, s.at, s.stageprops))
 	}
 	bgcdef := *newBgCtrl()
 	i = 0
@@ -1007,34 +1303,8 @@ func loadStage(def string, main bool) (*Stage, error) {
 			s.stageCamera.zoffset += int32(b.start[1] * s.scale[1])
 		}
 	}
-	ratio1 := float32(s.stageCamera.localcoord[0]) / float32(s.stageCamera.localcoord[1])
-	ratio2 := float32(sys.gameWidth) / 240
-	if ratio1 > ratio2 {
-		s.stageCamera.drawOffsetY =
-			MinF(float32(s.stageCamera.localcoord[1])*s.localscl*0.5*
-				(ratio1/ratio2-1), float32(Max(0, s.stageCamera.overdrawlow)))
-	}
-	if !s.stageCamera.ytensionenable {
-		s.stageCamera.drawOffsetY += MinF(float32(s.stageCamera.boundlow), MaxF(0, float32(s.stageCamera.floortension)*s.stageCamera.verticalfollow)) * s.localscl
-	} else {
-		s.stageCamera.drawOffsetY += MinF(float32(s.stageCamera.boundlow),
-			MaxF(0, (-26+(240/(float32(sys.gameWidth)/float32(s.stageCamera.localcoord[0])))-float32(s.stageCamera.tensionhigh)))) * s.localscl
-	}
-	//TODO: test if it works reasonably close to mugen
-	if sys.gameWidth > s.stageCamera.localcoord[0]*3*320/(s.stageCamera.localcoord[1]*4) {
-		if s.stageCamera.cutlow == math.MinInt32 {
-			//if omitted, the engine attempts to guess a reasonable set of values
-			s.stageCamera.drawOffsetY -= float32(s.stageCamera.localcoord[1]-s.stageCamera.zoffset) / s.localscl //- float32(s.stageCamera.boundlow)*s.localscl
-		} else {
-			//number of pixels into the bottom of the screen that may be cut from drawing when the screen aspect is shorter than the stage aspect
-			if s.stageCamera.cutlow < s.stageCamera.boundlow || s.stageCamera.boundlow <= 0 {
-				s.stageCamera.drawOffsetY -= float32(s.stageCamera.cutlow) * s.localscl
-			} // else {
-			//	s.stageCamera.drawOffsetY -= float32(s.stageCamera.boundlow) * s.localscl
-			//}
-		}
-	}
-	s.mainstage = main
+
+	s.mainstage = maindef
 	return s, nil
 }
 func (s *Stage) copyStageVars(src *Stage) {
@@ -1053,7 +1323,10 @@ func (s *Stage) copyStageVars(src *Stage) {
 	s.stageCamera.ytensionenable = src.stageCamera.ytensionenable
 	s.leftbound = src.leftbound
 	s.rightbound = src.rightbound
+	s.stageCamera.topz = src.stageCamera.topz
+	s.stageCamera.botz = src.stageCamera.botz
 	s.stageCamera.ztopscale = src.stageCamera.ztopscale
+	s.stageCamera.zbotscale = src.stageCamera.zbotscale
 	s.screenleft = src.screenleft
 	s.screenright = src.screenright
 	s.stageCamera.zoffset = src.stageCamera.zoffset
@@ -1066,7 +1339,13 @@ func (s *Stage) copyStageVars(src *Stage) {
 	s.sdw.fadeend = src.sdw.fadeend
 	s.sdw.fadebgn = src.sdw.fadebgn
 	s.sdw.xshear = src.sdw.xshear
-	s.reflection = src.reflection
+	s.sdw.offset[0] = src.sdw.offset[0]
+	s.sdw.offset[1] = src.sdw.offset[1]
+	s.reflection.intensity = src.reflection.intensity
+	s.reflection.offset[0] = src.reflection.offset[0]
+	s.reflection.offset[1] = src.reflection.offset[1]
+	s.reflection.xshear = src.reflection.xshear
+	s.reflection.yscale = src.reflection.yscale
 }
 func (s *Stage) getBg(id int32) (bg []*backGround) {
 	if id >= 0 {
@@ -1182,8 +1461,10 @@ func (s *Stage) runBgCtrl(bgc *bgCtrl) {
 		if bgc.v[0] == 0 {
 			bgc.v[1] = 0
 		}
-		a := float32(bgc.v[2]) / 360
-		st := int32((a - float32(int32(a))) * float32(bgc.v[1]))
+		// Unlike plain sin.x elements, in the SinX BGCtrl the last parameter is a time offset rather than a phase
+		// https://github.com/ikemen-engine/Ikemen-GO/issues/1790
+		ph := float32(bgc.v[2]) / float32(bgc.v[1])
+		st := int32((ph - float32(int32(ph))) * float32(bgc.v[1]))
 		if st < 0 {
 			st += Abs(bgc.v[1])
 		}
@@ -1279,7 +1560,8 @@ func (s *Stage) action() {
 		}
 	}
 }
-func (s *Stage) draw(top bool, x, y, scl float32) {
+
+func (s *Stage) draw(layer int32, x, y, scl float32) {
 	bgscl := float32(1)
 	if s.hires {
 		bgscl = 0.5
@@ -1304,7 +1586,7 @@ func (s *Stage) draw(top bool, x, y, scl float32) {
 		if yofs < 0 {
 			tmp := (float32(s.stageCamera.boundhigh) - pos[1]) * scl2
 			if scl > 1 {
-				tmp += (sys.cam.screenZoff + float32(sys.gameHeight-240)) * (1/scl - 1)
+				tmp += (sys.cam.GroundLevel() + float32(sys.gameHeight-240)) * (1/scl - 1)
 			} else {
 				tmp += float32(sys.gameHeight) * (1/scl - 1)
 			}
@@ -1328,18 +1610,19 @@ func (s *Stage) draw(top bool, x, y, scl float32) {
 			pos[i] = float32(math.Ceil(float64(p - 0.5)))
 		}
 	}
-	yofs3 := (float32(s.stageCamera.drawOffsetY)*bgscl +
-		float32(s.stageCamera.localcoord[1]-240)*s.localscl)
-	yofs4 := ((360*float32(s.stageCamera.localcoord[0]) +
-		160*float32(s.stageCamera.localcoord[1])) /
-		float32(s.stageCamera.localcoord[0])) / 480
+	if layer == 0 {
+		s.drawModel(pos, yofs, scl, 0)
+	} else if layer == 1 {
+		s.drawModel(pos, yofs, scl, 1)
+	}
 	for _, b := range s.bg {
-		if b.visible && b.toplayer == top && b.anim.spr != nil {
-			b.draw(pos, scl, bgscl, s.localscl, s.scale,
-				yofs+yofs3*Pow(Pow(scl, b.zoomdelta[1]), yofs4)-s.stageCamera.drawOffsetY*(1-b.delta[1]*bgscl), true)
+		if b.layerno == layer && b.visible && b.anim.spr != nil {
+			b.draw(pos, scl, bgscl, s.localscl, s.scale, yofs, true)
 		}
 	}
+	BlendReset()
 }
+
 func (s *Stage) reset() {
 	s.sff.palList.ResetRemap()
 	s.bga.clear()
@@ -1442,5 +1725,1806 @@ func (s *Stage) modifyBGCtrl(id int32, t, v [3]int32, x, y float32, src, dst [2]
 			}
 			s.reload = true
 		}
+	}
+}
+
+// 3D Stage Related
+// TODO: Refactor and move this to a new file?
+type Model struct {
+	scenes              []*Scene
+	nodes               []*Node
+	meshes              []*Mesh
+	textures            []*GLTFTexture
+	materials           []*Material
+	offset              [3]float32
+	rotation            [3]float32
+	scale               [3]float32
+	pfx                 *PalFX
+	animationTimeStamps map[uint32][]float32
+	animations          []*GLTFAnimation
+	skins               []*Skin
+	vertexBuffer        []byte
+	elementBuffer       []uint32
+	lights              []GLTFLight
+	environment         *Environment
+	//lightNodes           []int32
+	//lightNodesForeground []int32
+}
+type Scene struct {
+	nodes           []uint32
+	name            string
+	lightNodes      []uint32
+	imageBasedLight *uint32
+}
+
+type LightType byte
+
+const (
+	DirectionalLight = iota
+	PointLight
+	SpotLight
+)
+
+type GLTFLight struct {
+	direction       [3]float32
+	lightRange      float32
+	color           [3]float32
+	intensity       float32
+	position        [3]float32
+	innerConeCos    float32
+	outerConeCos    float32
+	innerConeAngle  float32
+	outerConeAngle  float32
+	lightType       LightType
+	shadowMapNear   float32
+	shadowMapFar    float32
+	shadowMapBottom float32
+	shadowMapTop    float32
+	shadowMapLeft   float32
+	shadowMapRight  float32
+	shadowMapBias   float32
+}
+
+type GLTFAnimationType byte
+
+const (
+	TRSTranslation = iota
+	TRSScale
+	TRSRotation
+	MorphTargetWeight
+)
+
+type GLTFAnimationInterpolation byte
+
+const (
+	InterpolationLinear = iota
+	InterpolationStep
+	InterpolationCubicSpline
+)
+
+type GLTFAnimation struct {
+	duration float32
+	time     float32
+	channels []*GLTFAnimationChannel
+	samplers []*GLTFAnimationSampler
+}
+type GLTFAnimationChannel struct {
+	path         GLTFAnimationType
+	nodeIndex    uint32
+	samplerIndex uint32
+}
+type GLTFAnimationSampler struct {
+	inputIndex    uint32
+	output        []float32
+	interpolation GLTFAnimationInterpolation
+}
+type GLTFTexture struct {
+	tex *Texture
+}
+
+type AlphaMode byte
+
+const (
+	AlphaModeOpaque = iota
+	AlphaModeMask
+	AlphaModeBlend
+)
+
+type Material struct {
+	name                      string
+	alphaMode                 AlphaMode
+	alphaCutoff               float32
+	textureIndex              *uint32
+	normalMapIndex            *uint32
+	ambientOcclusionMapIndex  *uint32
+	metallicRoughnessMapIndex *uint32
+	baseColorFactor           [4]float32
+	doubleSided               bool
+	ambientOcclusion          float32
+	metallic                  float32
+	roughness                 float32
+	unlit                     bool
+}
+type Trans byte
+
+const (
+	TransNone = iota
+	TransAdd
+	TransReverseSubtract
+)
+
+type Node struct {
+	meshIndex          *uint32
+	transition         [3]float32
+	rotation           [4]float32
+	scale              [3]float32
+	transformChanged   bool
+	localTransform     mgl.Mat4
+	worldTransform     mgl.Mat4
+	normalMatrix       mgl.Mat4
+	childrenIndex      []uint32
+	trans              Trans
+	castShadow         bool
+	zWrite             bool
+	zTest              bool
+	parentIndex        *uint32
+	lightIndex         *uint32
+	lightDirection     [3]float32
+	shadowMapNear      float32
+	shadowMapFar       float32
+	shadowMapBottom    float32
+	shadowMapTop       float32
+	shadowMapLeft      float32
+	shadowMapRight     float32
+	shadowMapBias      float32
+	skin               *uint32
+	morphTargetWeights []float32
+}
+
+type Skin struct {
+	joints              []uint32
+	inverseBindMatrices []float32
+	texture             *GLTFTexture
+}
+type Mesh struct {
+	name               string
+	morphTargetWeights []float32
+	primitives         []*Primitive
+}
+type PrimitiveMode byte
+
+const (
+	POINTS = iota
+	LINES
+	LINE_LOOP
+	LINE_STRIP
+	TRIANGLES
+	TRIANGLE_STRIP
+	TRIANGLE_FAN
+)
+
+type MorphTarget struct {
+	positionIndex  *uint32
+	normalIndex    *uint32
+	tangentIndex   *uint32
+	uvIndex        *uint32
+	colorIndex     *uint32
+	targetType     uint32
+	offset         uint32
+	positionBuffer []float32
+	uvBuffer       []float32
+	normalBuffer   []float32
+	tangentBuffer  []float32
+	colorBuffer    []float32
+}
+type Primitive struct {
+	numVertices         uint32
+	numIndices          uint32
+	vertexBufferOffset  uint32
+	elementBufferOffset uint32
+	materialIndex       *uint32
+	useUV               bool
+	useNormal           bool
+	useTangent          bool
+	useVertexColor      bool
+	useJoint0           bool
+	useJoint1           bool
+	mode                PrimitiveMode
+	morphTargets        []*MorphTarget
+	morphTargetTexture  *GLTFTexture
+	morphTargetCount    uint32
+	morphTargetOffset   [4]float32
+	morphTargetWeight   [8]float32
+}
+
+var gltfPrimitiveModeMap = map[gltf.PrimitiveMode]PrimitiveMode{
+	gltf.PrimitivePoints:        POINTS,
+	gltf.PrimitiveLines:         LINES,
+	gltf.PrimitiveLineLoop:      LINE_LOOP,
+	gltf.PrimitiveLineStrip:     LINE_STRIP,
+	gltf.PrimitiveTriangles:     TRIANGLES,
+	gltf.PrimitiveTriangleStrip: TRIANGLE_STRIP,
+	gltf.PrimitiveTriangleFan:   TRIANGLE_FAN,
+}
+
+type Environment struct {
+	hdrTexture            *GLTFTexture
+	cubeMapTexture        *GLTFTexture
+	lambertianTexture     *GLTFTexture
+	GGXTexture            *GLTFTexture
+	GGXLUT                *GLTFTexture
+	lambertianSampleCount int32
+	GGXSampleCount        int32
+	GGXLUTSampleCount     int32
+	mipmapLevels          int32
+	environmentIntensity  float32
+}
+
+func loadEnvironment(filepath string) (*Environment, error) {
+	env := &Environment{}
+	env.lambertianSampleCount = 2048
+	env.GGXSampleCount = 1024
+	env.GGXLUTSampleCount = 512
+	env.environmentIntensity = 1
+	file, err := os.Open(filepath)
+	if err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(file)
+	if err != nil {
+		return nil, err
+	}
+	env.hdrTexture = &GLTFTexture{}
+	env.cubeMapTexture = &GLTFTexture{}
+	env.lambertianTexture = &GLTFTexture{}
+	env.GGXTexture = &GLTFTexture{}
+	env.GGXLUT = &GLTFTexture{}
+	if hdrImg, ok := img.(hdr.Image); ok {
+		size := img.Bounds().Max.X * img.Bounds().Max.Y * 3
+		data := make([]float32, size, size)
+		bounds := img.Bounds()
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				color := hdrImg.HDRAt(x, y)
+				r, g, b, _ := color.HDRRGBA()
+				data = append(data, float32(r), float32(g), float32(b))
+			}
+		}
+		for i, j := 0, len(data)-3; i < j; i, j = i+3, j-3 {
+			data[i], data[i+1], data[i+2], data[j], data[j+1], data[j+2] = data[j], data[j+1], data[j+2], data[i], data[i+1], data[i+2]
+		}
+		sys.mainThreadTask <- func() {
+			if !gfx.enableModel {
+				return
+			}
+			env.hdrTexture.tex = newHDRTexture(int32(img.Bounds().Max.X), int32(img.Bounds().Max.Y))
+
+			env.hdrTexture.tex.SetRGBPixelData(data)
+			env.cubeMapTexture.tex = newCubeMapTexture(256, true)
+			env.lambertianTexture.tex = newCubeMapTexture(256, false)
+			env.GGXTexture.tex = newCubeMapTexture(256, true)
+			env.GGXLUT.tex = newDataTexture(1024, 1024)
+
+			gfx.RenderCubeMap(env.hdrTexture.tex, env.cubeMapTexture.tex, env.cubeMapTexture.tex.width)
+			gfx.RenderFilteredCubeMap(0, env.cubeMapTexture.tex, env.lambertianTexture.tex, env.lambertianTexture.tex.width, 0, env.lambertianSampleCount, 0)
+			lowestMipLevel := int32(4)
+			env.mipmapLevels = int32(Floor(float32(math.Log2(256)))) + 1 - lowestMipLevel
+			for i := int32(0); i < env.mipmapLevels; i++ {
+				roughness := float32(i) / float32((env.mipmapLevels - 1))
+				gfx.RenderFilteredCubeMap(1, env.cubeMapTexture.tex, env.GGXTexture.tex, env.GGXTexture.tex.width, int32(i), env.GGXSampleCount, roughness)
+			}
+			gfx.RenderLUT(1, env.cubeMapTexture.tex, env.GGXLUT.tex, env.GGXLUT.tex.width, env.GGXLUTSampleCount)
+		}
+	}
+	return env, nil
+}
+func loadglTFStage(filepath string) (*Model, error) {
+	mdl := &Model{offset: [3]float32{0, 0, 0}, rotation: [3]float32{0, 0, 0}, scale: [3]float32{1, 1, 1}}
+	doc, err := gltf.Open(filepath)
+	if err != nil {
+		return nil, err
+	}
+	var images = make([]image.Image, 0, len(doc.Images))
+	for _, img := range doc.Images {
+		var buffer *bytes.Buffer
+		if len(img.URI) > 0 {
+			if strings.HasPrefix(img.URI, "data:") {
+				if strings.HasPrefix(img.URI, "data:image/png;base64,") {
+					decodedData, err := base64.StdEncoding.DecodeString(img.URI[22:])
+					if err != nil {
+						return nil, err
+					}
+					buffer = bytes.NewBuffer(decodedData)
+				} else {
+					decodedData, err := base64.StdEncoding.DecodeString(img.URI[23:])
+					if err != nil {
+						return nil, err
+					}
+					buffer = bytes.NewBuffer(decodedData)
+				}
+			} else {
+				if err := LoadFile(&img.URI, []string{filepath, "", sys.motifDir, "data/"}, func(filename string) error {
+					data, err := os.ReadFile(filename)
+					if err != nil {
+						return err
+					}
+					buffer = bytes.NewBuffer(data)
+					return nil
+				}); err != nil {
+					return nil, err
+				}
+
+			}
+		} else {
+			source, err := modeler.ReadBufferView(doc, doc.BufferViews[*img.BufferView])
+			if err != nil {
+				return nil, err
+			}
+			buffer = bytes.NewBuffer(source)
+		}
+		res, _, err := image.Decode(buffer)
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, res)
+	}
+	mdl.textures = make([]*GLTFTexture, 0, len(doc.Textures))
+	textureMap := map[[2]int32]*GLTFTexture{}
+	for _, t := range doc.Textures {
+		if t.Sampler != nil {
+			if texture, ok := textureMap[[2]int32{int32(*t.Source), int32(*t.Sampler)}]; ok {
+				mdl.textures = append(mdl.textures, texture)
+			} else {
+				texture := &GLTFTexture{}
+				s := doc.Samplers[*t.Sampler]
+				mag, _ := map[gltf.MagFilter]int32{
+					gltf.MagUndefined: 9729,
+					gltf.MagNearest:   9728,
+					gltf.MagLinear:    9729,
+				}[s.MagFilter]
+				min, _ := map[gltf.MinFilter]int32{
+					gltf.MinUndefined:            9729,
+					gltf.MinNearest:              9728,
+					gltf.MinLinear:               9729,
+					gltf.MinNearestMipMapNearest: 9984,
+					gltf.MinLinearMipMapNearest:  9985,
+					gltf.MinNearestMipMapLinear:  9986,
+					gltf.MinLinearMipMapLinear:   9987,
+				}[s.MinFilter]
+				wrapS, _ := map[gltf.WrappingMode]int32{
+					gltf.WrapClampToEdge:    33071,
+					gltf.WrapMirroredRepeat: 33648,
+					gltf.WrapRepeat:         10497,
+				}[s.WrapS]
+				wrapT, _ := map[gltf.WrappingMode]int32{
+					gltf.WrapClampToEdge:    33071,
+					gltf.WrapMirroredRepeat: 33648,
+					gltf.WrapRepeat:         10497,
+				}[s.WrapT]
+
+				img := images[*t.Source]
+				rgba := image.NewRGBA(img.Bounds())
+				draw.Draw(rgba, img.Bounds(), img, img.Bounds().Min, draw.Src)
+				sys.mainThreadTask <- func() {
+					texture.tex = newTexture(int32(img.Bounds().Max.X), int32(img.Bounds().Max.Y), 32, false)
+					texture.tex.SetDataG(rgba.Pix, mag, min, wrapS, wrapT)
+				}
+				textureMap[[2]int32{int32(*t.Source), int32(*t.Sampler)}] = texture
+				mdl.textures = append(mdl.textures, texture)
+			}
+		} else {
+			if texture, ok := textureMap[[2]int32{int32(*t.Source), -1}]; ok {
+				mdl.textures = append(mdl.textures, texture)
+			} else {
+				texture := &GLTFTexture{}
+				mag := 9728
+				min := 9728
+				wrapS := 10497
+				wrapT := 10497
+				img := images[*t.Source]
+				rgba := image.NewRGBA(img.Bounds())
+				draw.Draw(rgba, img.Bounds(), img, img.Bounds().Min, draw.Src)
+				sys.mainThreadTask <- func() {
+					texture.tex = newTexture(int32(img.Bounds().Max.X), int32(img.Bounds().Max.Y), 32, false)
+					texture.tex.SetDataG(rgba.Pix, int32(mag), int32(min), int32(wrapS), int32(wrapT))
+				}
+				textureMap[[2]int32{int32(*t.Source), -1}] = texture
+				mdl.textures = append(mdl.textures, texture)
+			}
+		}
+
+	}
+	mdl.materials = make([]*Material, 0, len(doc.Materials))
+	for _, m := range doc.Materials {
+		material := &Material{}
+		if m.PBRMetallicRoughness.BaseColorTexture != nil {
+			material.textureIndex = new(uint32)
+			*material.textureIndex = m.PBRMetallicRoughness.BaseColorTexture.Index
+		}
+		if m.NormalTexture != nil {
+			material.normalMapIndex = new(uint32)
+			*material.normalMapIndex = *m.NormalTexture.Index
+		}
+		if m.PBRMetallicRoughness.MetallicRoughnessTexture != nil {
+			material.metallicRoughnessMapIndex = new(uint32)
+			*material.metallicRoughnessMapIndex = m.PBRMetallicRoughness.MetallicRoughnessTexture.Index
+		}
+		material.baseColorFactor = *m.PBRMetallicRoughness.BaseColorFactor
+		material.roughness = *m.PBRMetallicRoughness.RoughnessFactor
+		material.metallic = *m.PBRMetallicRoughness.MetallicFactor
+		if m.OcclusionTexture != nil {
+			material.ambientOcclusionMapIndex = new(uint32)
+			*material.ambientOcclusionMapIndex = *m.OcclusionTexture.Index
+			material.ambientOcclusion = *m.OcclusionTexture.Strength
+		} else {
+			material.ambientOcclusion = 0
+		}
+		material.name = m.Name
+		material.alphaMode, _ = map[gltf.AlphaMode]AlphaMode{
+			gltf.AlphaOpaque: AlphaModeOpaque,
+			gltf.AlphaMask:   AlphaModeMask,
+			gltf.AlphaBlend:  AlphaModeBlend,
+		}[m.AlphaMode]
+		if material.alphaMode == AlphaModeMask {
+			material.alphaCutoff = m.AlphaCutoffOrDefault()
+		} else {
+			material.alphaCutoff = 0
+		}
+		material.doubleSided = m.DoubleSided
+		material.unlit = false
+		if m.Extensions != nil {
+			if _, ok := m.Extensions["KHR_materials_unlit"]; ok {
+				material.unlit = true
+			}
+		}
+
+		mdl.materials = append(mdl.materials, material)
+	}
+	if doc.Extensions != nil {
+		if lightExtension, ok := doc.Extensions["KHR_lights_punctual"]; ok {
+			var ext interface{}
+			err := json.Unmarshal(lightExtension.(json.RawMessage), &ext)
+			if err != nil {
+				return nil, err
+			}
+			for _, light := range ext.(map[string]interface{})["lights"].([]interface{}) {
+				params := light.(map[string]interface{})
+				newLight := GLTFLight{intensity: 1, color: [3]float32{1, 1, 1}, lightRange: -1, innerConeAngle: 0, outerConeAngle: math.Pi / 4}
+				lightType := params["type"].(string)
+				switch lightType {
+				case "point":
+					newLight.lightType = PointLight
+				case "spot":
+					newLight.lightType = SpotLight
+				case "directional":
+					newLight.lightType = DirectionalLight
+				}
+				if intensity, ok := params["intensity"]; ok {
+					newLight.intensity = (float32)(intensity.(float64))
+				}
+				if lightRange, ok := params["range"]; ok {
+					newLight.lightRange = (float32)(lightRange.(float64))
+				}
+				if spot, ok := params["spot"]; ok {
+					if outerConeAngle, ok := spot.(map[string]interface{})["outerConeAngle"]; ok {
+						newLight.outerConeAngle = (float32)(outerConeAngle.(float64))
+					}
+					if innerConeAngle, ok := spot.(map[string]interface{})["innerConeAngle"]; ok {
+						newLight.innerConeAngle = (float32)(innerConeAngle.(float64))
+					}
+				}
+				newLight.innerConeCos = float32(math.Cos(float64(newLight.innerConeAngle)))
+				newLight.outerConeCos = float32(math.Cos(float64(newLight.outerConeAngle)))
+				if color, ok := params["color"]; ok {
+					colors := color.([]interface{})
+					newLight.color = [3]float32{(float32)(colors[0].(float64)), (float32)(colors[1].(float64)), (float32)(colors[2].(float64))}
+				}
+
+				newLight.shadowMapNear = 0
+				newLight.shadowMapFar = 0
+				newLight.shadowMapBottom = 0
+				newLight.shadowMapTop = 0
+				newLight.shadowMapLeft = 0
+				newLight.shadowMapRight = 0
+				newLight.shadowMapBias = 0
+
+				if extraParams, ok := params["extras"]; ok {
+
+					v, ok := extraParams.(map[string]interface{})
+					if ok {
+						if v["shadowMapNear"] != nil {
+							newLight.shadowMapNear = (float32)(v["shadowMapNear"].(float64))
+						}
+						if v["shadowMapFar"] != nil {
+							newLight.shadowMapFar = (float32)(v["shadowMapFar"].(float64))
+						}
+						if v["shadowMapBottom"] != nil {
+							newLight.shadowMapBottom = (float32)(v["shadowMapBottom"].(float64))
+						}
+						if v["shadowMapTop"] != nil {
+							newLight.shadowMapTop = (float32)(v["shadowMapTop"].(float64))
+						}
+						if v["shadowMapLeft"] != nil {
+							newLight.shadowMapLeft = (float32)(v["shadowMapLeft"].(float64))
+						}
+						if v["shadowMapTop"] != nil {
+							newLight.shadowMapRight = (float32)(v["shadowMapRight"].(float64))
+						}
+						if v["shadowMapBias"] != nil {
+							newLight.shadowMapBias = (float32)(v["shadowMapBias"].(float64))
+						}
+					}
+				}
+				mdl.lights = append(mdl.lights, newLight)
+			}
+		}
+	}
+
+	var vertexBuffer []byte
+	var elementBuffer []uint32
+	mdl.meshes = make([]*Mesh, 0, len(doc.Meshes))
+	for _, m := range doc.Meshes {
+		var mesh = &Mesh{}
+		mesh.name = m.Name
+		mesh.morphTargetWeights = m.Weights
+		for _, p := range m.Primitives {
+			var primitive = &Primitive{}
+			primitive.vertexBufferOffset = uint32(len(vertexBuffer))
+			primitive.elementBufferOffset = uint32(4 * len(elementBuffer))
+			var posBuffer [][3]float32
+			positions, err := modeler.ReadPosition(doc, doc.Accessors[p.Attributes[gltf.POSITION]], posBuffer)
+			if err != nil {
+				return nil, err
+			}
+			primitive.numVertices = uint32(len(positions))
+
+			for i := 0; i < int(primitive.numVertices); i++ {
+				vertexBuffer = append(vertexBuffer, byte(i%256), byte((i>>8)%256), byte((i>>16)%256), byte((i>>32)%256))
+			}
+
+			for _, pos := range positions {
+				vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, pos[:]...)...)
+			}
+			if idx, ok := p.Attributes[gltf.TEXCOORD_0]; ok {
+				var uvBuffer [][2]float32
+				texCoords, err := modeler.ReadTextureCoord(doc, doc.Accessors[idx], uvBuffer)
+				if err != nil {
+					return nil, err
+				}
+				if len(texCoords) > 0 {
+					primitive.useUV = true
+					for _, tex := range texCoords {
+						vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, tex[:]...)...)
+					}
+				} else {
+					primitive.useUV = false
+				}
+			} else {
+				primitive.useUV = false
+			}
+			if idx, ok := p.Attributes[gltf.NORMAL]; ok {
+				var normalBuffer [][3]float32
+				normals, err := modeler.ReadNormal(doc, doc.Accessors[idx], normalBuffer)
+				if err != nil {
+					return nil, err
+				}
+				if len(normals) > 0 {
+					primitive.useNormal = true
+					for _, tex := range normals {
+						vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, tex[:]...)...)
+					}
+				} else {
+					primitive.useNormal = false
+				}
+			} else {
+				primitive.useNormal = false
+			}
+			if idx, ok := p.Attributes[gltf.TANGENT]; ok {
+				var tangentBuffer [][4]float32
+				tangents, err := modeler.ReadTangent(doc, doc.Accessors[idx], tangentBuffer)
+				if err != nil {
+					return nil, err
+				}
+				if len(tangents) > 0 {
+					primitive.useTangent = true
+					for _, tex := range tangents {
+						vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, tex[:]...)...)
+					}
+				} else {
+					primitive.useTangent = false
+				}
+			} else {
+				primitive.useTangent = false
+			}
+			var indexBuffer []uint32
+			indices, err := modeler.ReadIndices(doc, doc.Accessors[*p.Indices], indexBuffer)
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range indices {
+				elementBuffer = append(elementBuffer, p)
+			}
+			primitive.numIndices = uint32(len(indices))
+			if idx, ok := p.Attributes[gltf.COLOR_0]; ok {
+				primitive.useVertexColor = true
+				switch doc.Accessors[idx].ComponentType {
+				case gltf.ComponentUbyte:
+					if doc.Accessors[idx].Type == gltf.AccessorVec3 {
+						var vecBuffer [][3]uint8
+						vecs, err := modeler.ReadAccessor(doc, doc.Accessors[idx], vecBuffer)
+						if err != nil {
+							return nil, err
+						}
+						for _, vec := range vecs.([][3]uint8) {
+							vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, float32(vec[0])/255, float32(vec[1])/255, float32(vec[2])/255, 1)...)
+						}
+					} else {
+						var vecBuffer [][4]uint8
+						vecs, err := modeler.ReadAccessor(doc, doc.Accessors[idx], vecBuffer)
+						if err != nil {
+							return nil, err
+						}
+						for _, vec := range vecs.([][4]uint8) {
+							vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, float32(vec[0])/255, float32(vec[1])/255, float32(vec[2])/255, float32(vec[3])/255)...)
+						}
+					}
+				case gltf.ComponentUshort:
+					if doc.Accessors[idx].Type == gltf.AccessorVec3 {
+						var vecBuffer [][3]uint16
+						vecs, err := modeler.ReadAccessor(doc, doc.Accessors[idx], vecBuffer)
+						if err != nil {
+							return nil, err
+						}
+						for _, vec := range vecs.([][3]uint16) {
+							vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, float32(vec[0])/65535, float32(vec[1])/65535, float32(vec[2])/65535, 1)...)
+						}
+					} else {
+						var vecBuffer [][4]uint16
+						vecs, err := modeler.ReadAccessor(doc, doc.Accessors[idx], vecBuffer)
+						if err != nil {
+							return nil, err
+						}
+						for _, vec := range vecs.([][4]uint16) {
+							vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, float32(vec[0])/65535, float32(vec[1])/65535, float32(vec[2])/65535, float32(vec[3])/65535)...)
+						}
+					}
+				case gltf.ComponentFloat:
+					if doc.Accessors[idx].Type == gltf.AccessorVec3 {
+						var vecBuffer [][3]float32
+						vecs, err := modeler.ReadAccessor(doc, doc.Accessors[idx], vecBuffer)
+						if err != nil {
+							return nil, err
+						}
+						for _, vec := range vecs.([][3]float32) {
+							vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, vec[0], vec[1], vec[2], 1)...)
+						}
+					} else {
+						var vecBuffer [][4]float32
+						vecs, err := modeler.ReadAccessor(doc, doc.Accessors[idx], vecBuffer)
+						if err != nil {
+							return nil, err
+						}
+						for _, vec := range vecs.([][4]float32) {
+							vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, vec[:]...)...)
+						}
+					}
+				}
+			} else {
+				primitive.useVertexColor = false
+			}
+			if idx, ok := p.Attributes[gltf.JOINTS_0]; ok {
+				primitive.useJoint0 = true
+				var jointBuffer [][4]uint16
+				joints, err := modeler.ReadJoints(doc, doc.Accessors[idx], jointBuffer)
+				if err != nil {
+					return nil, err
+				}
+				for _, joint := range joints {
+					var f [4]float32
+					for j, v := range joint {
+						f[j] = float32(v)
+					}
+					vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, f[:]...)...)
+				}
+				if idx, ok := p.Attributes[gltf.WEIGHTS_0]; ok {
+					var weightBuffer [][4]float32
+					weights, err := modeler.ReadWeights(doc, doc.Accessors[idx], weightBuffer)
+					if err != nil {
+						return nil, err
+					}
+					for _, weight := range weights {
+						vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, weight[:]...)...)
+					}
+				} else {
+					return nil, errors.New("Primitive attribute JOINTS_0 is specified but WEIGHTS_0 is not specified.")
+				}
+				if idx, ok := p.Attributes["JOINTS_1"]; ok {
+					primitive.useJoint1 = true
+					var jointBuffer [][4]uint16
+					joints, err := modeler.ReadJoints(doc, doc.Accessors[idx], jointBuffer)
+					if err != nil {
+						return nil, err
+					}
+					for _, joint := range joints {
+						var f [4]float32
+						for j, v := range joint {
+							f[j] = float32(v)
+						}
+						vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, f[:]...)...)
+					}
+					primitive.useJoint1 = false
+					if idx, ok := p.Attributes["WEIGHTS_1"]; primitive.useJoint1 && ok {
+						var weightBuffer [][4]float32
+						weights, err := modeler.ReadWeights(doc, doc.Accessors[idx], weightBuffer)
+						if err != nil {
+							return nil, err
+						}
+						for _, weight := range weights {
+							vertexBuffer = append(vertexBuffer, f32.Bytes(binary.LittleEndian, weight[:]...)...)
+						}
+					} else if primitive.useJoint1 {
+						return nil, errors.New("Primitive attribute JOINTS_1 is specified but WEIGHTS_1 is not specified.")
+					}
+				}
+			} else {
+				primitive.useJoint0 = false
+			}
+			if len(p.Targets) > 0 {
+				numAttributes := 0
+				for _, t := range p.Targets {
+					numAttributes += len(t)
+				}
+				for _, t := range p.Targets {
+					if len(mesh.morphTargetWeights) == 0 {
+						mesh.morphTargetWeights = make([]float32, len(p.Targets))
+					}
+					target := &MorphTarget{}
+					for attr, accessor := range t {
+						switch attr {
+						case "POSITION":
+							var posBuffer [][3]float32
+							positions, err := modeler.ReadPosition(doc, doc.Accessors[accessor], posBuffer)
+							if err != nil {
+								return nil, err
+							}
+							target.positionBuffer = make([]float32, 0, 4*int(primitive.numVertices))
+							for _, pos := range positions {
+								target.positionBuffer = append(target.positionBuffer, pos[0], pos[1], pos[2], 0)
+							}
+						case "NORMAL":
+							var posBuffer [][3]float32
+							positions, err := modeler.ReadPosition(doc, doc.Accessors[accessor], posBuffer)
+							if err != nil {
+								return nil, err
+							}
+							target.normalBuffer = make([]float32, 0, 4*int(primitive.numVertices))
+							for _, pos := range positions {
+								target.normalBuffer = append(target.normalBuffer, pos[0], pos[1], pos[2], 0)
+							}
+						case "TANGENT":
+							var posBuffer [][3]float32
+							positions, err := modeler.ReadPosition(doc, doc.Accessors[accessor], posBuffer)
+							if err != nil {
+								return nil, err
+							}
+							target.tangentBuffer = make([]float32, 0, 4*int(primitive.numVertices))
+							for _, pos := range positions {
+								target.tangentBuffer = append(target.tangentBuffer, pos[0], pos[1], pos[2], 0)
+							}
+						case "TEXCOORD_0":
+							var uvBuffer [][2]float32
+							texCoords, err := modeler.ReadTextureCoord(doc, doc.Accessors[accessor], uvBuffer)
+							if err != nil {
+								return nil, err
+							}
+							target.uvBuffer = make([]float32, 0, 4*int(primitive.numVertices))
+							for _, uv := range texCoords {
+								target.uvBuffer = append(target.uvBuffer, uv[0], uv[1], 0, 0)
+							}
+						case "COLOR_0":
+							target.colorBuffer = make([]float32, 0, 4*int(primitive.numVertices))
+							switch doc.Accessors[accessor].ComponentType {
+							case gltf.ComponentUbyte:
+								if doc.Accessors[accessor].Type == gltf.AccessorVec3 {
+									var vecBuffer [][3]uint8
+									vecs, err := modeler.ReadAccessor(doc, doc.Accessors[accessor], vecBuffer)
+									if err != nil {
+										return nil, err
+									}
+									for _, vec := range vecs.([][3]uint8) {
+										target.colorBuffer = append(target.colorBuffer, float32(vec[0])/255, float32(vec[1])/255, float32(vec[2])/255, 1)
+									}
+								} else {
+									var vecBuffer [][4]uint8
+									vecs, err := modeler.ReadAccessor(doc, doc.Accessors[accessor], vecBuffer)
+									if err != nil {
+										return nil, err
+									}
+									for _, vec := range vecs.([][4]uint8) {
+										target.colorBuffer = append(target.colorBuffer, float32(vec[0])/255, float32(vec[1])/255, float32(vec[2])/255, float32(vec[3])/255)
+									}
+								}
+							case gltf.ComponentUshort:
+								if doc.Accessors[accessor].Type == gltf.AccessorVec3 {
+									var vecBuffer [][3]uint16
+									vecs, err := modeler.ReadAccessor(doc, doc.Accessors[accessor], vecBuffer)
+									if err != nil {
+										return nil, err
+									}
+									for _, vec := range vecs.([][3]uint16) {
+										target.colorBuffer = append(target.colorBuffer, float32(vec[0])/65535, float32(vec[1])/65535, float32(vec[2])/65535, 1)
+									}
+								} else {
+									var vecBuffer [][4]uint16
+									vecs, err := modeler.ReadAccessor(doc, doc.Accessors[accessor], vecBuffer)
+									if err != nil {
+										return nil, err
+									}
+									for _, vec := range vecs.([][4]uint16) {
+										target.colorBuffer = append(target.colorBuffer, float32(vec[0])/65535, float32(vec[1])/65535, float32(vec[2])/65535, float32(vec[3])/65535)
+									}
+								}
+							case gltf.ComponentFloat:
+								if doc.Accessors[accessor].Type == gltf.AccessorVec3 {
+									var vecBuffer [][3]float32
+									vecs, err := modeler.ReadAccessor(doc, doc.Accessors[accessor], vecBuffer)
+									if err != nil {
+										return nil, err
+									}
+									for _, vec := range vecs.([][3]float32) {
+										target.colorBuffer = append(target.colorBuffer, vec[0], vec[1], vec[2], 1)
+									}
+								} else {
+									var vecBuffer [][4]float32
+									vecs, err := modeler.ReadAccessor(doc, doc.Accessors[accessor], vecBuffer)
+									if err != nil {
+										return nil, err
+									}
+									for _, vec := range vecs.([][4]float32) {
+										target.colorBuffer = append(target.colorBuffer, vec[0], vec[1], vec[2], vec[3])
+									}
+								}
+							}
+						}
+					}
+					primitive.morphTargets = append(primitive.morphTargets, target)
+				}
+				primitive.morphTargetTexture = &GLTFTexture{}
+				sys.mainThreadTask <- func() {
+					dimension := int(math.Ceil(math.Pow(float64(8*primitive.numVertices), 0.5)))
+					primitive.morphTargetTexture.tex = newDataTexture(int32(dimension), int32(dimension))
+					//primitive.morphTargetTexture.tex.SetPixelData(targetBuffer)
+				}
+			}
+
+			if p.Material != nil {
+				primitive.materialIndex = new(uint32)
+				*primitive.materialIndex = *p.Material
+			}
+			primitive.mode = gltfPrimitiveModeMap[p.Mode]
+			mesh.primitives = append(mesh.primitives, primitive)
+		}
+		mdl.meshes = append(mdl.meshes, mesh)
+	}
+	mdl.vertexBuffer = vertexBuffer
+	mdl.elementBuffer = elementBuffer
+
+	mdl.nodes = make([]*Node, 0, len(doc.Nodes))
+	var lightNodes []int32
+	for idx, n := range doc.Nodes {
+		var node = &Node{}
+		mdl.nodes = append(mdl.nodes, node)
+		node.rotation = n.Rotation
+		node.transition = n.Translation
+		node.scale = n.Scale
+		node.skin = n.Skin
+		node.childrenIndex = n.Children
+		node.morphTargetWeights = n.Weights
+		if n.Mesh != nil {
+			node.meshIndex = new(uint32)
+			*node.meshIndex = *n.Mesh
+			if len(node.morphTargetWeights) == 0 {
+				node.morphTargetWeights = mdl.meshes[*node.meshIndex].morphTargetWeights
+			}
+		}
+		node.trans = TransNone
+		node.castShadow = true
+		node.zTest = true
+		node.zWrite = true
+		if n.Extensions != nil {
+			if l, ok := n.Extensions["KHR_lights_punctual"]; ok {
+				var ext interface{}
+				err := json.Unmarshal(l.(json.RawMessage), &ext)
+				if err != nil {
+					return nil, err
+				}
+				lightNodes = append(lightNodes, int32(idx))
+				node.lightIndex = new(uint32)
+				*node.lightIndex = (uint32)(ext.(map[string]interface{})["light"].(float64))
+				node.shadowMapNear = 0
+				node.shadowMapFar = 0
+				node.shadowMapBottom = 0
+				node.shadowMapTop = 0
+				node.shadowMapLeft = 0
+				node.shadowMapRight = 0
+				node.shadowMapBias = 0
+			}
+		}
+		if n.Extras != nil {
+			v, ok := n.Extras.(map[string]interface{})
+			if ok {
+				switch v["trans"] {
+				case "ADD":
+					node.trans = TransAdd
+				case "SUB":
+					node.trans = TransReverseSubtract
+				case "NONE":
+					node.trans = TransNone
+				}
+				if v["disableZTest"] != nil && v["disableZTest"] != "0" && v["disableZTest"] != "false" {
+					node.zTest = false
+				}
+				if v["disableZWrite"] != nil && v["disableZWrite"] != "0" && v["disableZWrite"] != "false" {
+					node.zWrite = false
+				}
+				if v["castShadow"] != nil && (v["castShadow"] == "0" || v["castShadow"] == "false") {
+					node.castShadow = false
+				}
+				if v["shadowMapNear"] != nil {
+					node.shadowMapNear = (float32)(v["shadowMapNear"].(float64))
+				}
+				if v["shadowMapFar"] != nil {
+					node.shadowMapFar = (float32)(v["shadowMapFar"].(float64))
+				}
+				if v["shadowMapBottom"] != nil {
+					node.shadowMapBottom = (float32)(v["shadowMapBottom"].(float64))
+				}
+				if v["shadowMapTop"] != nil {
+					node.shadowMapTop = (float32)(v["shadowMapTop"].(float64))
+				}
+				if v["shadowMapLeft"] != nil {
+					node.shadowMapLeft = (float32)(v["shadowMapLeft"].(float64))
+				}
+				if v["shadowMapTop"] != nil {
+					node.shadowMapRight = (float32)(v["shadowMapRight"].(float64))
+				}
+				if v["shadowMapBias"] != nil {
+					node.shadowMapBias = (float32)(v["shadowMapBias"].(float64))
+				}
+			}
+		}
+		node.transformChanged = true
+	}
+	mdl.animationTimeStamps = map[uint32][]float32{}
+	for _, a := range doc.Animations {
+		anim := &GLTFAnimation{}
+		mdl.animations = append(mdl.animations, anim)
+		anim.duration = 0
+		for _, c := range a.Channels {
+			channel := &GLTFAnimationChannel{}
+			channel.nodeIndex = *c.Target.Node
+			channel.samplerIndex = *c.Sampler
+			switch c.Target.Path {
+			case gltf.TRSTranslation:
+				channel.path = TRSTranslation
+			case gltf.TRSScale:
+				channel.path = TRSScale
+			case gltf.TRSRotation:
+				channel.path = TRSRotation
+			case gltf.TRSWeights:
+				channel.path = MorphTargetWeight
+			default:
+				continue
+			}
+			anim.channels = append(anim.channels, channel)
+		}
+		for _, s := range a.Samplers {
+			sampler := &GLTFAnimationSampler{}
+			anim.samplers = append(anim.samplers, sampler)
+			if _, ok := mdl.animationTimeStamps[s.Input]; !ok {
+				var timeBuffer []float32
+				times, err := modeler.ReadAccessor(doc, doc.Accessors[s.Input], timeBuffer)
+				if err != nil {
+					return nil, err
+				}
+				mdl.animationTimeStamps[s.Input] = make([]float32, 0, len(times.([]float32)))
+				for _, t := range times.([]float32) {
+					mdl.animationTimeStamps[s.Input] = append(mdl.animationTimeStamps[s.Input], t)
+				}
+			}
+			sampler.interpolation = GLTFAnimationInterpolation(s.Interpolation)
+			sampler.inputIndex = s.Input
+			if anim.duration < mdl.animationTimeStamps[s.Input][len(mdl.animationTimeStamps[s.Input])-1] {
+				anim.duration = mdl.animationTimeStamps[s.Input][len(mdl.animationTimeStamps[s.Input])-1]
+			}
+			switch doc.Accessors[s.Output].Type {
+			case gltf.AccessorScalar:
+				var vecBuffer []float32
+				vecs, err := modeler.ReadAccessor(doc, doc.Accessors[s.Output], vecBuffer)
+				if err != nil {
+					return nil, err
+				}
+				sampler.output = make([]float32, 0, len(vecs.([]float32)))
+				for _, val := range vecs.([]float32) {
+					sampler.output = append(sampler.output, val)
+				}
+			case gltf.AccessorVec3:
+				var vecBuffer [][3]float32
+				vecs, err := modeler.ReadAccessor(doc, doc.Accessors[s.Output], vecBuffer)
+				if err != nil {
+					return nil, err
+				}
+				sampler.output = make([]float32, 0, len(vecs.([][3]float32))*3)
+				for _, vec := range vecs.([][3]float32) {
+					sampler.output = append(sampler.output, vec[0], vec[1], vec[2])
+				}
+			case gltf.AccessorVec4:
+				var vecBuffer [][4]float32
+				vecs, err := modeler.ReadAccessor(doc, doc.Accessors[s.Output], vecBuffer)
+				if err != nil {
+					return nil, err
+				}
+				sampler.output = make([]float32, 0, len(vecs.([][4]float32))*4)
+				for _, vec := range vecs.([][4]float32) {
+					sampler.output = append(sampler.output, vec[0], vec[1], vec[2], vec[3])
+				}
+			}
+		}
+	}
+	for _, s := range doc.Skins {
+		var skin = &Skin{}
+		for _, j := range s.Joints {
+			skin.joints = append(skin.joints, j)
+		}
+
+		if s.InverseBindMatrices != nil {
+			var matrixBuffer [][4][4]float32
+			matrices, err := modeler.ReadAccessor(doc, doc.Accessors[*s.InverseBindMatrices], matrixBuffer)
+			if err != nil {
+				return nil, err
+			}
+			for _, mat := range matrices.([][4][4]float32) {
+				skin.inverseBindMatrices = append(skin.inverseBindMatrices, mat[0][:]...)
+				skin.inverseBindMatrices = append(skin.inverseBindMatrices, mat[1][:]...)
+				skin.inverseBindMatrices = append(skin.inverseBindMatrices, mat[2][:]...)
+			}
+		}
+
+		skin.texture = &GLTFTexture{}
+		sys.mainThreadTask <- func() {
+			skin.texture.tex = newDataTexture(6, int32(len(skin.joints)))
+		}
+
+		mdl.skins = append(mdl.skins, skin)
+	}
+
+	for _, s := range doc.Scenes {
+		var scene = &Scene{}
+		scene.name = s.Name
+		scene.nodes = s.Nodes
+		for _, n := range s.Nodes {
+			scene.getSceneLight(n, mdl.nodes)
+		}
+		mdl.scenes = append(mdl.scenes, scene)
+	}
+	return mdl, nil
+}
+func (s *Scene) getSceneLight(n uint32, nodes []*Node) {
+	node := nodes[n]
+	for _, c := range node.childrenIndex {
+		s.getSceneLight(c, nodes)
+	}
+	if node.lightIndex != nil {
+		s.lightNodes = append(s.lightNodes, n)
+	}
+}
+func (n *Node) getLocalTransform() (mat mgl.Mat4) {
+	mat = mgl.Ident4()
+	if n.transformChanged {
+		mat = mgl.Translate3D(n.transition[0], n.transition[1], n.transition[2])
+		mat = mat.Mul4(mgl.Quat{W: n.rotation[3], V: mgl.Vec3{n.rotation[0], n.rotation[1], n.rotation[2]}}.Mat4())
+		mat = mat.Mul4(mgl.Scale3D(n.scale[0], n.scale[1], n.scale[2]))
+		n.localTransform = mat
+		n.transformChanged = false
+	} else {
+		mat = n.localTransform
+	}
+	return
+}
+func (n *Node) calculateWorldTransform(parentTransorm mgl.Mat4, nodes []*Node) {
+	mat := n.getLocalTransform()
+	n.worldTransform = parentTransorm.Mul4(mat)
+	if n.meshIndex != nil {
+		n.normalMatrix = n.worldTransform.Inv().Transpose()
+	}
+	if n.lightIndex != nil {
+		scale := [3]float32{n.worldTransform.Col(0).Len(), n.worldTransform.Col(1).Len(), n.worldTransform.Col(2).Len()}
+		mat := mgl.Ident4()
+		for i := 0; i < 3; i++ {
+			mat[i] = n.worldTransform[i] / scale[0]
+			mat[i+4] = n.worldTransform[i+4] / scale[1]
+			mat[i+8] = n.worldTransform[i+8] / scale[2]
+		}
+		quat := mgl.Mat4ToQuat(mat).Normalize()
+		direction := mgl.Vec3{0, 0, -1}
+		n.lightDirection = quat.Rotate(direction)
+	}
+	for _, index := range n.childrenIndex {
+		(*nodes[index]).calculateWorldTransform(n.worldTransform, nodes)
+	}
+	return
+}
+func calculateAnimationData(mdl *Model, n *Node) {
+	for _, index := range n.childrenIndex {
+		calculateAnimationData(mdl, mdl.nodes[index])
+	}
+	if n.meshIndex == nil {
+		return
+	}
+	if n.skin != nil {
+		mdl.skins[*n.skin].calculateSkinMatrices(n.worldTransform.Inv(), mdl.nodes)
+	}
+	var morphTargetWeights []struct {
+		index  uint32
+		weight float32
+	}
+	if len(n.morphTargetWeights) > 0 {
+		for idx, w := range n.morphTargetWeights {
+			if w != 0 {
+				morphTargetWeights = append(morphTargetWeights, struct {
+					index  uint32
+					weight float32
+				}{uint32(idx), w})
+			}
+		}
+	}
+	m := mdl.meshes[*n.meshIndex]
+	for _, p := range m.primitives {
+		if p.materialIndex == nil {
+			continue
+		}
+		if len(morphTargetWeights) > 0 && len(p.morphTargets) >= len(morphTargetWeights) {
+
+			//var targetIndices [8]uint32
+			targetBuffer := make([]float32, 0, 32*p.numVertices)
+			count := 0
+			for _, t := range morphTargetWeights {
+				morphTarget := p.morphTargets[t.index]
+				if len(morphTarget.positionBuffer) > 0 {
+					//targetIndices[targetCount] = *morphTarget.positionIndex
+					targetBuffer = append(targetBuffer, morphTarget.positionBuffer...)
+					p.morphTargetWeight[count] = t.weight
+					count += 1
+				}
+			}
+			p.morphTargetOffset[0] = float32(count)
+			for _, t := range morphTargetWeights {
+				morphTarget := p.morphTargets[t.index]
+				if len(morphTarget.normalBuffer) > 0 {
+					targetBuffer = append(targetBuffer, morphTarget.normalBuffer...)
+					p.morphTargetWeight[count] = t.weight
+					count += 1
+				}
+			}
+			p.morphTargetOffset[1] = float32(count)
+			for _, t := range morphTargetWeights {
+				morphTarget := p.morphTargets[t.index]
+				if len(morphTarget.tangentBuffer) > 0 {
+					targetBuffer = append(targetBuffer, morphTarget.tangentBuffer...)
+					p.morphTargetWeight[count] = t.weight
+					count += 1
+				}
+			}
+			p.morphTargetOffset[2] = float32(count)
+			for _, t := range morphTargetWeights {
+				morphTarget := p.morphTargets[t.index]
+				if len(morphTarget.uvBuffer) > 0 {
+					targetBuffer = append(targetBuffer, morphTarget.uvBuffer...)
+					p.morphTargetWeight[count] = t.weight
+					count += 1
+				}
+			}
+			p.morphTargetOffset[3] = float32(count)
+			for _, t := range morphTargetWeights {
+				morphTarget := p.morphTargets[t.index]
+				if len(morphTarget.colorBuffer) > 0 {
+					targetBuffer = append(targetBuffer, morphTarget.colorBuffer...)
+					p.morphTargetWeight[count] = t.weight
+					count += 1
+				}
+			}
+			p.morphTargetCount = uint32(count)
+			if len(targetBuffer) > int(8*4*p.numVertices) {
+				targetBuffer = targetBuffer[:8*4*p.numVertices]
+			}
+			if len(targetBuffer) < int(4*p.morphTargetTexture.tex.width*p.morphTargetTexture.tex.width) {
+				targetBuffer = append(targetBuffer, make([]float32, int(4*p.morphTargetTexture.tex.width*p.morphTargetTexture.tex.width)-len(targetBuffer))...)
+			}
+			p.morphTargetTexture.tex.SetPixelData(targetBuffer)
+		} else {
+			p.morphTargetCount = 0
+			p.morphTargetOffset = [4]float32{0, 0, 0, 0}
+			p.morphTargetWeight = [8]float32{0, 0, 0, 0, 0, 0, 0, 0}
+		}
+	}
+}
+func drawNode(mdl *Model, scene *Scene, n *Node, camOffset [3]float32, drawBlended bool, drawShadow bool, unlit bool) {
+	//mat := n.getLocalTransform()
+	//model = model.Mul4(mat)
+	for _, index := range n.childrenIndex {
+		drawNode(mdl, scene, mdl.nodes[index], camOffset, drawBlended, drawShadow, unlit)
+	}
+	if n.meshIndex == nil {
+		return
+	}
+	if !drawShadow {
+		neg, grayscale, padd, pmul, invblend, hue := mdl.pfx.getFcPalFx(false, -int(n.trans))
+
+		blendEq := BlendAdd
+		src := BlendOne
+		dst := BlendOneMinusSrcAlpha
+		switch n.trans {
+		case TransAdd:
+			if invblend == 3 {
+				src = BlendOne
+				dst = BlendOne
+				blendEq = BlendReverseSubtract
+				neg = false
+			} else {
+				src = BlendOne
+				dst = BlendOne
+			}
+		case TransReverseSubtract:
+			if invblend == 3 {
+				src = BlendOne
+				dst = BlendOne
+				neg = false
+			} else {
+				src = BlendOne
+				dst = BlendOne
+				blendEq = BlendReverseSubtract
+			}
+		default:
+			src = BlendOne
+			dst = BlendOneMinusSrcAlpha
+		}
+		m := mdl.meshes[*n.meshIndex]
+		reverseCull := n.worldTransform.Det() < 0
+		for _, p := range m.primitives {
+			if p.materialIndex == nil {
+				continue
+			}
+			mat := mdl.materials[*p.materialIndex]
+			if ((mat.alphaMode != AlphaModeBlend && n.trans == TransNone) && drawBlended) ||
+				((mat.alphaMode == AlphaModeBlend || n.trans != TransNone) && !drawBlended) {
+				return
+			}
+			color := mdl.materials[*p.materialIndex].baseColorFactor
+			gfx.SetModelPipeline(blendEq, src, dst, n.zTest, n.zWrite, mdl.materials[*p.materialIndex].doubleSided, reverseCull, p.useUV, p.useNormal, p.useTangent, p.useVertexColor, p.useJoint0, p.useJoint1, p.numVertices, p.vertexBufferOffset)
+
+			gfx.SetModelUniformMatrix("model", n.worldTransform[:])
+			gfx.SetModelUniformMatrix("normalMatrix", n.normalMatrix[:])
+			gfx.SetModelUniformI("numVertices", int(p.numVertices))
+			//gfx.SetModelUniformF("ambientOcclusion", 1)
+			gfx.SetModelUniformF("metallicRoughness", mat.metallic, mat.roughness)
+			gfx.SetModelUniformF("ambientOcclusionStrength", mat.ambientOcclusion)
+
+			gfx.SetModelUniformF("cameraPosition", -camOffset[0], -camOffset[1], -camOffset[2])
+
+			if n.skin != nil {
+				skin := mdl.skins[*n.skin]
+				gfx.SetModelTexture("jointMatrices", skin.texture.tex)
+			}
+
+			if p.morphTargetCount > 0 {
+				gfx.SetModelUniformF("morphTargetOffset", p.morphTargetOffset[0], p.morphTargetOffset[1], p.morphTargetOffset[2], p.morphTargetOffset[3])
+				gfx.SetModelUniformI("numTargets", int(Min(int32(p.morphTargetCount), 8)))
+				gfx.SetModelTexture("morphTargetValues", p.morphTargetTexture.tex)
+				gfx.SetModelUniformFv("morphTargetWeight", p.morphTargetWeight[:])
+				gfx.SetModelUniformI("morphTargetTextureDimension", int(p.morphTargetTexture.tex.width))
+			} else {
+				gfx.SetModelUniformFv("morphTargetWeight", make([]float32, 8))
+			}
+			mode := p.mode
+			if sys.wireframeDraw {
+				mode = 1 // Set mesh render mode to "lines"
+			}
+			gfx.SetModelUniformI("unlit", int(Btoi(unlit || mat.unlit)))
+			gfx.SetModelUniformFv("add", padd[:])
+			gfx.SetModelUniformFv("mult", []float32{pmul[0] * float32(sys.brightness) / 256, pmul[1] * float32(sys.brightness) / 256, pmul[2] * float32(sys.brightness) / 256})
+			gfx.SetModelUniformI("neg", int(Btoi(neg)))
+			gfx.SetModelUniformF("hue", hue)
+			gfx.SetModelUniformF("gray", grayscale)
+			gfx.SetModelUniformI("enableAlpha", int(Btoi(mat.alphaMode == AlphaModeBlend)))
+			gfx.SetModelUniformF("alphaThreshold", mat.alphaCutoff)
+			gfx.SetModelUniformFv("baseColorFactor", color[:])
+			if n.skin != nil {
+				gfx.SetModelUniformI("numJoints", len(mdl.skins[*n.skin].joints))
+			}
+			if index := mat.textureIndex; index != nil {
+				gfx.SetModelTexture("tex", mdl.textures[*index].tex)
+				gfx.SetModelUniformI("useTexture", 1)
+			} else {
+				gfx.SetModelUniformI("useTexture", 0)
+			}
+			if index := mat.normalMapIndex; index != nil {
+				gfx.SetModelTexture("normalMap", mdl.textures[*index].tex)
+				gfx.SetModelUniformI("useNormalMap", 1)
+			} else {
+				gfx.SetModelUniformI("useNormalMap", 0)
+			}
+			if index := mat.metallicRoughnessMapIndex; index != nil {
+				gfx.SetModelTexture("metallicRoughnessMap", mdl.textures[*index].tex)
+				gfx.SetModelUniformI("useMetallicRoughnessMap", 1)
+			} else {
+				gfx.SetModelUniformI("useMetallicRoughnessMap", 0)
+			}
+			if index := mat.ambientOcclusionMapIndex; index != nil {
+				gfx.SetModelTexture("ambientOcclusionMap", mdl.textures[*index].tex)
+			}
+			gfx.RenderElements(mode, int(p.numIndices), int(p.elementBufferOffset))
+
+			gfx.ReleaseModelPipeline()
+		}
+	} else {
+		if n.trans == TransAdd || n.trans == TransReverseSubtract || !n.zTest || !n.zWrite || !n.castShadow {
+			return
+		}
+		m := mdl.meshes[*n.meshIndex]
+		reverseCull := n.worldTransform.Det() < 0
+		for _, p := range m.primitives {
+			if p.materialIndex == nil {
+				continue
+			}
+			mat := mdl.materials[*p.materialIndex]
+			if ((mat.alphaMode != AlphaModeBlend && n.trans == TransNone) && drawBlended) ||
+				((mat.alphaMode == AlphaModeBlend || n.trans != TransNone) && !drawBlended) {
+				return
+			}
+			color := mdl.materials[*p.materialIndex].baseColorFactor
+			if color[3] == 0 && mat.alphaMode == AlphaModeBlend {
+				return
+			}
+			gfx.setShadowMapPipeline(mdl.materials[*p.materialIndex].doubleSided, reverseCull, p.useUV, p.useNormal, p.useTangent, p.useVertexColor, p.useJoint0, p.useJoint1, p.numVertices, p.vertexBufferOffset)
+
+			gfx.SetShadowMapUniformMatrix("model", n.worldTransform[:])
+			gfx.SetShadowMapUniformI("numVertices", int(p.numVertices))
+			if n.skin != nil {
+				skin := mdl.skins[*n.skin]
+				gfx.SetShadowMapTexture("jointMatrices", skin.texture.tex)
+			}
+
+			if p.morphTargetCount > 0 {
+				gfx.SetShadowMapUniformF("morphTargetOffset", p.morphTargetOffset[0], p.morphTargetOffset[1], p.morphTargetOffset[2], p.morphTargetOffset[3])
+				gfx.SetShadowMapUniformI("numTargets", int(Min(int32(p.morphTargetCount), 8)))
+				gfx.SetShadowMapTexture("morphTargetValues", p.morphTargetTexture.tex)
+				gfx.SetShadowMapUniformFv("morphTargetWeight", p.morphTargetWeight[:])
+				gfx.SetShadowMapUniformI("morphTargetTextureDimension", int(p.morphTargetTexture.tex.width))
+			} else {
+				gfx.SetShadowMapUniformFv("morphTargetOffset", make([]float32, 4))
+				gfx.SetShadowMapUniformI("numTargets", 0)
+				gfx.SetShadowMapUniformFv("morphTargetWeight", make([]float32, 8))
+			}
+			mode := p.mode
+			gfx.SetShadowMapUniformI("enableAlpha", int(Btoi(mat.alphaMode == AlphaModeBlend)))
+			gfx.SetShadowMapUniformF("alphaThreshold", mat.alphaCutoff)
+			gfx.SetShadowMapUniformFv("baseColorFactor", color[:])
+			if n.skin != nil {
+				gfx.SetShadowMapUniformI("numJoints", len(mdl.skins[*n.skin].joints))
+			}
+			if index := mat.textureIndex; index != nil {
+				gfx.SetShadowMapTexture("tex", mdl.textures[*index].tex)
+				gfx.SetShadowMapUniformI("useTexture", 1)
+			} else {
+				gfx.SetShadowMapUniformI("useTexture", 0)
+			}
+			gfx.RenderElements(mode, int(p.numIndices), int(p.elementBufferOffset))
+		}
+	}
+}
+func (s *Stage) drawModel(pos [2]float32, yofs float32, scl float32, sceneNumber int) {
+	if s.model == nil || len(s.model.scenes) <= sceneNumber || !gfx.enableModel {
+		return
+	}
+	drawFOV := s.stageCamera.fov * math.Pi / 180
+
+	var syo float32
+	scaleCorrection := float32(sys.cam.localcoord[1]) * sys.cam.localscl / float32(sys.gameHeight)
+	posMul := float32(math.Tan(float64(drawFOV)/2)) * -s.model.offset[2] / (float32(sys.cam.localcoord[1]) / 2)
+	aspectCorrection := (float32(sys.cam.zoffset)/float32(sys.cam.localcoord[1]) - (float32(sys.cam.zoffset)*s.localscl-sys.cam.aspectcorrection)/float32(sys.gameHeight)) * 2
+	syo = -(float32(s.stageCamera.zoffset) - float32(sys.cam.localcoord[1])/2) * (1 - scl) / scl
+	syo2 := -(float32(s.stageCamera.zoffset) - float32(sys.cam.localcoord[1])/2) * (1 - scaleCorrection) / float32(sys.cam.localcoord[1]) * 2
+	offset := [3]float32{(pos[0]*-posMul + s.model.offset[0]/scl), (((pos[1])/scl+syo)*posMul + s.model.offset[1]), s.model.offset[2] / scl}
+	rotation := [3]float32{s.model.rotation[0], s.model.rotation[1], s.model.rotation[2]}
+	scale := [3]float32{s.model.scale[0], s.model.scale[1], s.model.scale[2]}
+	proj := mgl.Translate3D(0, (sys.cam.zoomanchorcorrection+yofs)/float32(sys.gameHeight)*2+syo2+aspectCorrection, 0)
+	proj = proj.Mul4(mgl.Scale3D(scaleCorrection, scaleCorrection, 1))
+	proj = proj.Mul4(mgl.Translate3D(0, (sys.cam.yshift * scl), 0))
+	proj = proj.Mul4(mgl.Perspective(drawFOV, float32(sys.scrrect[2])/float32(sys.scrrect[3]), s.stageCamera.near, s.stageCamera.far))
+	view := mgl.Ident4()
+	view = view.Mul4(mgl.Translate3D(offset[0], offset[1], offset[2]))
+	view = view.Mul4(mgl.HomogRotate3DX(rotation[0]))
+	view = view.Mul4(mgl.HomogRotate3DY(rotation[1]))
+	view = view.Mul4(mgl.HomogRotate3DZ(rotation[2]))
+	view = view.Mul4(mgl.Scale3D(scale[0], scale[1], scale[2]))
+	scene := s.model.scenes[sceneNumber]
+	for _, index := range scene.nodes {
+		s.model.nodes[index].calculateWorldTransform(mgl.Ident4(), s.model.nodes)
+		calculateAnimationData(s.model, s.model.nodes[index])
+	}
+	if len(scene.lightNodes) > 0 && sceneNumber == 0 && gfx.enableShadow {
+		gfx.prepareShadowMapPipeline()
+		for i := 0; i < int(Min(int32(len(scene.lightNodes)), 4)); i++ {
+			light := s.model.nodes[scene.lightNodes[i]]
+			shadowMapNear := float32(0.1)
+			if s.model.lights[*light.lightIndex].lightType == DirectionalLight {
+				shadowMapNear = -20
+			}
+			shadowMapFar := float32(50)
+			shadowMapBottom := float32(-20)
+			shadowMapTop := float32(20)
+			shadowMapLeft := float32(-20)
+			shadowMapRight := float32(20)
+
+			if light.shadowMapNear != 0 {
+				shadowMapNear = light.shadowMapNear
+			}
+			if light.shadowMapFar != 0 {
+				shadowMapFar = light.shadowMapFar
+			}
+			if light.shadowMapBottom != 0 {
+				shadowMapBottom = light.shadowMapBottom
+			}
+			if light.shadowMapTop != 0 {
+				shadowMapTop = light.shadowMapTop
+			}
+			if light.shadowMapLeft != 0 {
+				shadowMapLeft = light.shadowMapLeft
+			}
+			if light.shadowMapRight != 0 {
+				shadowMapRight = light.shadowMapRight
+			}
+
+			lightProj := mgl.Perspective(mgl.DegToRad(90), 1, shadowMapNear, shadowMapFar)
+			if s.model.lights[*light.lightIndex].lightType == DirectionalLight {
+				lightProj = mgl.Ortho(shadowMapLeft, shadowMapRight, shadowMapBottom, shadowMapTop, shadowMapNear, shadowMapFar)
+			} else if s.model.lights[*light.lightIndex].lightType == SpotLight {
+				lightProj = mgl.Perspective(mgl.DegToRad(90), 1, shadowMapNear, shadowMapFar)
+			}
+			if s.model.lights[*light.lightIndex].lightType == PointLight {
+				gfx.SetShadowFrameCubeTexture(uint32(i))
+				gfx.SetShadowMapUniformI("layerOffset", i*6)
+				var lightMatrices [8]mgl.Mat4
+				lightMatrices[0] = lightProj.Mul4(mgl.LookAtV([3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14]}, [3]float32{light.worldTransform[12] + 1, light.worldTransform[13], light.worldTransform[14]}, [3]float32{0, -1, 0}))
+				lightMatrices[1] = lightProj.Mul4(mgl.LookAtV([3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14]}, [3]float32{light.worldTransform[12] - 1, light.worldTransform[13], light.worldTransform[14]}, [3]float32{0, -1, 0}))
+				lightMatrices[2] = lightProj.Mul4(mgl.LookAtV([3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14]}, [3]float32{light.worldTransform[12], light.worldTransform[13] + 1, light.worldTransform[14]}, [3]float32{0, 0, 1}))
+				lightMatrices[3] = lightProj.Mul4(mgl.LookAtV([3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14]}, [3]float32{light.worldTransform[12], light.worldTransform[13] - 1, light.worldTransform[14]}, [3]float32{0, 0, -1}))
+				lightMatrices[4] = lightProj.Mul4(mgl.LookAtV([3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14]}, [3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14] + 1}, [3]float32{0, -1, 0}))
+				lightMatrices[5] = lightProj.Mul4(mgl.LookAtV([3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14]}, [3]float32{light.worldTransform[12], light.worldTransform[13], light.worldTransform[14] - 1}, [3]float32{0, -1, 0}))
+				for j := 0; j < 6; j++ {
+					gfx.SetShadowMapUniformMatrix("lightMatrices["+strconv.Itoa(j)+"]", lightMatrices[j][:])
+				}
+				gfx.SetShadowMapUniformI("lightType", 1)
+				gfx.SetShadowMapUniformF("farPlane", shadowMapFar)
+				//gfx.SetShadowMapUniformF("lightPos", light.worldTransform[12], light.worldTransform[13], light.worldTransform[14])
+			} else {
+				gfx.SetShadowFrameTexture(uint32(i))
+				lightView := mgl.LookAtV([3]float32{light.localTransform[12], light.localTransform[13], light.localTransform[14]}, [3]float32{light.localTransform[12] + light.lightDirection[0], light.localTransform[13] + light.lightDirection[1], light.localTransform[14] + light.lightDirection[2]}, [3]float32{0, 1, 0})
+				lightMatrix := lightProj.Mul4(lightView)
+				gfx.SetShadowMapUniformMatrix("lightMatrices[0]", lightMatrix[:])
+				gfx.SetShadowMapUniformF("farPlane", shadowMapFar)
+				if s.model.lights[*light.lightIndex].lightType == DirectionalLight {
+					gfx.SetShadowMapUniformI("lightType", 0)
+				} else {
+					gfx.SetShadowMapUniformI("lightType", 2)
+				}
+			}
+			gfx.SetShadowMapUniformF("lightPos", light.worldTransform[12], light.worldTransform[13], light.worldTransform[14])
+
+			for _, index := range scene.nodes {
+				drawNode(s.model, scene, s.model.nodes[index], offset, false, true, false)
+			}
+			for _, index := range scene.nodes {
+				drawNode(s.model, scene, s.model.nodes[index], offset, true, true, false)
+			}
+			if len(s.model.scenes) > 1 {
+				for _, index := range scene.nodes {
+					drawNode(s.model, s.model.scenes[1], s.model.nodes[index], offset, false, true, false)
+				}
+				for _, index := range scene.nodes {
+					drawNode(s.model, s.model.scenes[1], s.model.nodes[index], offset, true, true, false)
+				}
+			}
+		}
+		gfx.ReleaseShadowPipeline()
+	}
+	if s.model.environment != nil {
+		gfx.prepareModelPipeline(s.model.environment)
+	} else {
+		gfx.prepareModelPipeline(nil)
+	}
+	gfx.SetModelUniformMatrix("projection", proj[:])
+	gfx.SetModelUniformMatrix("view", view[:])
+
+	gfx.SetModelUniformF("farPlane", 50)
+
+	unlit := false
+	if len(scene.lightNodes) > 0 {
+		for idx := 0; idx < 4; idx++ {
+			if idx < len(scene.lightNodes) {
+				lightNode := s.model.nodes[scene.lightNodes[idx]]
+				light := s.model.lights[*lightNode.lightIndex]
+				shadowMapNear := float32(0.1)
+				shadowMapFar := float32(50)
+				shadowMapBottom := float32(-20)
+				shadowMapTop := float32(20)
+				shadowMapLeft := float32(-20)
+				shadowMapRight := float32(20)
+				shadowMapBias := float32(0.02)
+
+				if light.shadowMapNear != 0 {
+					shadowMapNear = light.shadowMapNear
+				}
+				if light.shadowMapFar != 0 {
+					shadowMapFar = light.shadowMapFar
+				}
+				if light.shadowMapBottom != 0 {
+					shadowMapBottom = light.shadowMapBottom
+				}
+				if light.shadowMapTop != 0 {
+					shadowMapTop = light.shadowMapTop
+				}
+				if light.shadowMapLeft != 0 {
+					shadowMapLeft = light.shadowMapLeft
+				}
+				if light.shadowMapRight != 0 {
+					shadowMapRight = light.shadowMapRight
+				}
+				if light.shadowMapBias != 0 {
+					shadowMapBias = light.shadowMapBias
+				}
+				if lightNode.shadowMapNear != 0 {
+					shadowMapNear = lightNode.shadowMapNear
+				}
+				if lightNode.shadowMapFar != 0 {
+					shadowMapFar = lightNode.shadowMapFar
+				}
+				if lightNode.shadowMapBottom != 0 {
+					shadowMapBottom = lightNode.shadowMapBottom
+				}
+				if lightNode.shadowMapTop != 0 {
+					shadowMapTop = lightNode.shadowMapTop
+				}
+				if lightNode.shadowMapLeft != 0 {
+					shadowMapLeft = lightNode.shadowMapLeft
+				}
+				if lightNode.shadowMapRight != 0 {
+					shadowMapRight = lightNode.shadowMapRight
+				}
+				if lightNode.shadowMapBias != 0 {
+					shadowMapBias = lightNode.shadowMapBias
+				}
+				gfx.SetModelUniformI("lights["+strconv.Itoa(idx)+"].type", int(light.lightType))
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].intensity", light.intensity)
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].innerConeCos", light.innerConeCos)
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].outerConeCos", light.outerConeCos)
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].range", light.lightRange)
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].color", light.color[0], light.color[1], light.color[2])
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].position", lightNode.worldTransform[12], lightNode.worldTransform[13], lightNode.worldTransform[14])
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].shadowMapFar", shadowMapFar)
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].shadowBias", shadowMapBias)
+				if light.lightType != PointLight {
+					gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].direction", lightNode.lightDirection[0], lightNode.lightDirection[1], lightNode.lightDirection[2])
+				}
+				if light.lightType == DirectionalLight {
+					shadowMapNear = -20
+				}
+				if light.lightType == DirectionalLight {
+					lightProj := mgl.Ortho(shadowMapLeft, shadowMapRight, shadowMapBottom, shadowMapTop, shadowMapNear, shadowMapFar)
+					lightView := mgl.LookAtV([3]float32{lightNode.localTransform[12], lightNode.localTransform[13], lightNode.localTransform[14]}, [3]float32{lightNode.localTransform[12] + lightNode.lightDirection[0], lightNode.localTransform[13] + lightNode.lightDirection[1], lightNode.localTransform[14] + lightNode.lightDirection[2]}, [3]float32{0, 1, 0})
+					lightMatrix := lightProj.Mul4(lightView)
+					gfx.SetModelUniformMatrix("lightMatrices["+strconv.Itoa(idx)+"]", lightMatrix[:])
+				} else if light.lightType == SpotLight {
+					lightProj := mgl.Perspective(mgl.DegToRad(90), 1, shadowMapNear, shadowMapFar)
+					lightView := mgl.LookAtV([3]float32{lightNode.localTransform[12], lightNode.localTransform[13], lightNode.localTransform[14]}, [3]float32{lightNode.localTransform[12] + lightNode.lightDirection[0], lightNode.localTransform[13] + lightNode.lightDirection[1], lightNode.localTransform[14] + lightNode.lightDirection[2]}, [3]float32{0, 1, 0})
+					lightMatrix := lightProj.Mul4(lightView)
+					gfx.SetModelUniformMatrix("lightMatrices["+strconv.Itoa(idx)+"]", lightMatrix[:])
+				} else {
+					ident := mgl.Ident4()
+					gfx.SetModelUniformMatrix("lightMatrices["+strconv.Itoa(idx)+"]", ident[:])
+				}
+			} else {
+				gfx.SetModelUniformF("lights["+strconv.Itoa(idx)+"].color", 0, 0, 0)
+
+			}
+		}
+	} else if s.model.environment == nil {
+		unlit = true
+	}
+	for _, index := range scene.nodes {
+		drawNode(s.model, scene, s.model.nodes[index], offset, false, false, unlit)
+	}
+	for _, index := range scene.nodes {
+		drawNode(s.model, scene, s.model.nodes[index], offset, true, false, unlit)
+	}
+}
+
+func (model *Model) step() {
+	for _, anim := range model.animations {
+		anim.time += sys.turbo / 60
+		for anim.time >= anim.duration && anim.duration > 0 {
+			anim.time -= anim.duration
+		}
+		time := 60 * float64(anim.time)
+		if math.Abs(time-math.Floor(time)) < 0.001 {
+			anim.time = float32(math.Floor(time) / 60)
+		} else if math.Abs(float64(anim.time)-math.Ceil(float64(anim.time))) < 0.001 {
+			anim.time = float32(math.Ceil(time) / 60)
+		}
+		if anim.time >= anim.duration && anim.duration > 0 {
+			anim.time = anim.duration
+		}
+		for _, channel := range anim.channels {
+			node := model.nodes[channel.nodeIndex]
+			sampler := anim.samplers[channel.samplerIndex]
+			prevIndex := 0
+			for i, t := range model.animationTimeStamps[sampler.inputIndex] {
+				if anim.time < t {
+					prevIndex = i - 1
+					break
+				}
+			}
+			if prevIndex != -1 && sampler.interpolation != InterpolationStep && prevIndex+1 < len(model.animationTimeStamps[sampler.inputIndex]) {
+				if sampler.interpolation == InterpolationLinear {
+					rate := (anim.time - model.animationTimeStamps[sampler.inputIndex][prevIndex]) / (model.animationTimeStamps[sampler.inputIndex][prevIndex+1] - model.animationTimeStamps[sampler.inputIndex][prevIndex])
+					switch channel.path {
+					case TRSTranslation:
+						for i := 0; i < 3; i++ {
+							newVal := sampler.output[prevIndex*3+i]*(1-rate) + sampler.output[(prevIndex+1)*3+i]*rate
+							if node.transition[i] != newVal {
+								node.transition[i] = newVal
+								node.transformChanged = true
+							}
+						}
+					case TRSScale:
+						for i := 0; i < 3; i++ {
+							newVal := sampler.output[prevIndex*3+i]*(1-rate) + sampler.output[(prevIndex+1)*3+i]*rate
+							if node.scale[i] != newVal {
+								node.scale[i] = newVal
+								node.transformChanged = true
+							}
+						}
+					case TRSRotation:
+						q1 := mgl.Quat{sampler.output[prevIndex*4+3], mgl.Vec3{sampler.output[prevIndex*4], sampler.output[prevIndex*4+1], sampler.output[prevIndex*4+2]}}
+						q2 := mgl.Quat{sampler.output[(prevIndex+1)*4+3], mgl.Vec3{sampler.output[(prevIndex+1)*4], sampler.output[(prevIndex+1)*4+1], sampler.output[(prevIndex+1)*4+2]}}
+						dotProduct := q1.Dot(q2)
+						if dotProduct < 0 {
+							q1 = q1.Inverse()
+						}
+						q := mgl.QuatSlerp(q1, q2, rate)
+						if node.rotation[0] != q.X() || node.rotation[1] != q.Y() || node.rotation[2] != q.Z() || node.rotation[3] != q.W {
+							node.rotation[0] = q.X()
+							node.rotation[1] = q.Y()
+							node.rotation[2] = q.Z()
+							node.rotation[3] = q.W
+							node.transformChanged = true
+						}
+					case MorphTargetWeight:
+						for i := 0; i < len(node.morphTargetWeights); i++ {
+							newVal := sampler.output[prevIndex*len(node.morphTargetWeights)+i]*(1-rate) + sampler.output[(prevIndex+1)*len(node.morphTargetWeights)+i]*rate
+							node.morphTargetWeights[i] = newVal
+						}
+					}
+				} else {
+					delta := (model.animationTimeStamps[sampler.inputIndex][prevIndex+1] - model.animationTimeStamps[sampler.inputIndex][prevIndex])
+					rate := (anim.time - model.animationTimeStamps[sampler.inputIndex][prevIndex]) / delta
+					rateSquare := rate * rate
+					rateCube := rateSquare * rate
+
+					switch channel.path {
+					case TRSTranslation:
+						for i := 0; i < 3; i++ {
+							newVal := (2*rateCube-3*rateSquare+1)*sampler.output[prevIndex*9+3*i+1] + delta*(rateCube-2*rateSquare+rate)*sampler.output[prevIndex*9+3*i+2] + (-2*rateCube+3*rateSquare)*sampler.output[(prevIndex+1)*9+3*i+1] + delta*(rateCube-rateSquare)*sampler.output[(prevIndex+1)*9+3*i]
+							if node.transition[i] != newVal {
+								node.transition[i] = newVal
+								node.transformChanged = true
+							}
+						}
+					case TRSScale:
+						for i := 0; i < 3; i++ {
+							newVal := (2*rateCube-3*rateSquare+1)*sampler.output[prevIndex*9+3*i+1] + delta*(rateCube-2*rateSquare+rate)*sampler.output[prevIndex*9+3*i+2] + (-2*rateCube+3*rateSquare)*sampler.output[(prevIndex+1)*9+3*i+1] + delta*(rateCube-rateSquare)*sampler.output[(prevIndex+1)*9+3*i]
+							if node.scale[i] != newVal {
+								node.scale[i] = newVal
+								node.transformChanged = true
+							}
+						}
+					case TRSRotation:
+						q1 := mgl.Quat{sampler.output[prevIndex*4+3], mgl.Vec3{sampler.output[prevIndex*4], sampler.output[prevIndex*4+1], sampler.output[prevIndex*4+2]}}
+						q2 := mgl.Quat{sampler.output[(prevIndex+1)*4+3], mgl.Vec3{sampler.output[(prevIndex+1)*4], sampler.output[(prevIndex+1)*4+1], sampler.output[(prevIndex+1)*4+2]}}
+						dotProduct := q1.Dot(q2)
+						if dotProduct < 0 {
+							q1 = q1.Inverse()
+						}
+						q := mgl.Quat{(2*rateCube-3*rateSquare+1)*sampler.output[prevIndex*12+9+1] + delta*(rateCube-2*rateSquare+rate)*sampler.output[prevIndex*12+9+2] + (-2*rateCube+3*rateSquare)*sampler.output[(prevIndex+1)*12+9+1] + delta*(rateCube-rateSquare)*sampler.output[(prevIndex+1)*12+9],
+							mgl.Vec3{
+								(2*rateCube-3*rateSquare+1)*sampler.output[prevIndex*12+1] + delta*(rateCube-2*rateSquare+rate)*sampler.output[prevIndex*12+2] + (-2*rateCube+3*rateSquare)*sampler.output[(prevIndex+1)*12+1] + delta*(rateCube-rateSquare)*sampler.output[(prevIndex+1)*12],
+								(2*rateCube-3*rateSquare+1)*sampler.output[prevIndex*12+3+1] + delta*(rateCube-2*rateSquare+rate)*sampler.output[prevIndex*12+3+2] + (-2*rateCube+3*rateSquare)*sampler.output[(prevIndex+1)*12+3+1] + delta*(rateCube-rateSquare)*sampler.output[(prevIndex+1)*12+3],
+								(2*rateCube-3*rateSquare+1)*sampler.output[prevIndex*12+6+1] + delta*(rateCube-2*rateSquare+rate)*sampler.output[prevIndex*12+6+2] + (-2*rateCube+3*rateSquare)*sampler.output[(prevIndex+1)*12+6+1] + delta*(rateCube-rateSquare)*sampler.output[(prevIndex+1)*12+6],
+							}}.Normalize()
+						if node.rotation[0] != q.X() || node.rotation[1] != q.Y() || node.rotation[2] != q.Z() || node.rotation[3] != q.W {
+							node.rotation[0] = q.X()
+							node.rotation[1] = q.Y()
+							node.rotation[2] = q.Z()
+							node.rotation[3] = q.W
+							node.transformChanged = true
+						}
+					case MorphTargetWeight:
+						for i := 0; i < len(node.morphTargetWeights); i++ {
+							newVal := (2*rateCube-3*rateSquare+1)*sampler.output[prevIndex*3*len(node.morphTargetWeights)+3*i+1] + delta*(rateCube-2*rateSquare+rate)*sampler.output[prevIndex*3*len(node.morphTargetWeights)+3*i+2] + (-2*rateCube+3*rateSquare)*sampler.output[(prevIndex+1)*3*len(node.morphTargetWeights)+3*i+1] + delta*(rateCube-rateSquare)*sampler.output[(prevIndex+1)*3*len(node.morphTargetWeights)+3*i]
+							node.morphTargetWeights[i] = newVal
+						}
+					}
+				}
+
+			} else {
+				if prevIndex == -1 {
+					prevIndex = 0
+				}
+				switch channel.path {
+				case TRSTranslation:
+					for i := 0; i < 3; i++ {
+						if node.transition[i] != sampler.output[prevIndex*3+i] {
+							node.transition[i] = sampler.output[prevIndex*3+i]
+							node.transformChanged = true
+						}
+					}
+				case TRSScale:
+					for i := 0; i < 3; i++ {
+						if node.scale[i] != sampler.output[prevIndex*3+i] {
+							node.scale[i] = sampler.output[prevIndex*3+i]
+							node.transformChanged = true
+						}
+					}
+				case TRSRotation:
+					for i := 0; i < 4; i++ {
+						if node.rotation[i] != sampler.output[prevIndex*4+i] {
+							node.rotation[i] = sampler.output[prevIndex*4+i]
+							node.transformChanged = true
+						}
+					}
+				case MorphTargetWeight:
+					for i := 0; i < len(node.morphTargetWeights); i++ {
+						newVal := sampler.output[prevIndex*len(node.morphTargetWeights)+i]
+						node.morphTargetWeights[i] = newVal
+					}
+				}
+			}
+		}
+	}
+}
+func (skin *Skin) calculateSkinMatrices(inverseGlobalTransform mgl.Mat4, nodes []*Node) {
+	matrices := make([]float32, len(skin.joints)*12*2)
+	for i, joint := range skin.joints {
+		n := nodes[joint]
+		reverseBindMatrix := skin.inverseBindMatrices[i*12 : (i+1)*12]
+		matrix := mgl.Ident4()
+		for j, v := range reverseBindMatrix {
+			matrix[j] = v
+		}
+		matrix = n.worldTransform.Mul4(matrix.Transpose())
+		matrix = inverseGlobalTransform.Mul4(matrix).Transpose()
+		for j := 0; j < 12; j++ {
+			matrices[i*24+j] = matrix[j]
+		}
+		normalMatrix := matrix.Transpose().Inv().Transpose()
+		for j := 0; j < 12; j++ {
+			matrices[i*24+12+j] = normalMatrix[j]
+		}
+	}
+	skin.texture.tex.SetPixelData(matrices)
+}
+func (model *Model) reset() {
+	for _, anim := range model.animations {
+		anim.time = 0
 	}
 }
