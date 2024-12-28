@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 function main() {
 	# Enable CGO.
 	export CGO_ENABLED=1
-	export GOEXPERIMENT=arenas
+
 	# Create "bin" folder.
 	mkdir -p bin
 
@@ -64,7 +64,7 @@ function varWin32() {
 		export CC=i686-w64-mingw32-gcc
 		export CXX=i686-w64-mingw32-g++
 	fi
-	binName="Ikemen_GO_GGPO_x86.exe"
+	binName="Ikemen_GO_x86.exe"
 }
 
 function varWin64() {
@@ -74,7 +74,7 @@ function varWin64() {
 		export CC=x86_64-w64-mingw32-gcc
 		export CXX=x86_64-w64-mingw32-g++
 	fi
-	binName="Ikemen_GO_GGPO.exe"
+	binName="Ikemen_GO.exe"
 }
 
 function varMacOS() {
@@ -89,18 +89,18 @@ function varMacOS() {
 			export CXX=o64-clang++
 		;;
 	esac
-	binName="Ikemen_GO_GGPO_MacOS"
+	binName="Ikemen_GO_MacOS"
 }
 function varLinux() {
 	export GOOS=linux
 	#export CC=gcc
 	#export CXX=g++
-	binName="Ikemen_GO_GGPO_Linux"
+	binName="Ikemen_GO_Linux"
 }
 function varLinuxARM() {
 	export GOOS=linux
 	export GOARCH=arm64
-	binName="Ikemen_GO__GGPO_LinuxARM"
+	binName="Ikemen_GO_LinuxARM"
 }
 
 # Build functions.
