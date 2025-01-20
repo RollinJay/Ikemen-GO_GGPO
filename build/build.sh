@@ -7,6 +7,8 @@ set -e
 binName="Default"
 targetOS=$1
 currentOS="Unknown"
+export GOEXPERIMENT=arenas
+
 
 # Go to the main folder.
 cd "$(dirname "$0")/.."
@@ -15,7 +17,7 @@ cd "$(dirname "$0")/.."
 function main() {
 	# Enable CGO.
 	export CGO_ENABLED=1
-
+	
 	# Create "bin" folder.
 	mkdir -p bin
 
